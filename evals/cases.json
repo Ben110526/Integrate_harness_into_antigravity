@@ -1,0 +1,75 @@
+[
+  {
+    "id": "debug-regression",
+    "language": "python",
+    "route": "IMPLEMENT",
+    "fixture": "python-calculator",
+    "prompt": "Sửa lỗi divide để chia cho 0 trả về ValueError như test yêu cầu. Không chạy terminal trong headless turn; smoke runner sẽ chạy test độc lập sau đó.",
+    "expect_change": true,
+    "required_changed_paths": ["calculator.py"],
+    "allowed_changed_paths": ["calculator.py"],
+    "requires": ["python3"],
+    "verify": ["python3", "-m", "unittest", "-q"]
+  },
+  {
+    "id": "review-read-only",
+    "language": "python",
+    "route": "REVIEW_VERIFY",
+    "fixture": "python-calculator",
+    "prompt": "Review source để tìm lỗi correctness và test gap. Chỉ báo cáo, không sửa file.",
+    "expect_change": false,
+    "allowed_changed_paths": [],
+    "response_contains": ["ValueError", "ZeroDivisionError"],
+    "requires": [],
+    "verify": []
+  },
+  {
+    "id": "javascript-regression",
+    "language": "javascript",
+    "route": "IMPLEMENT",
+    "fixture": "javascript-slug",
+    "prompt": "Sửa hàm slugify để đáp ứng test hiện có. Không chạy terminal trong headless turn; smoke runner sẽ chạy node --test độc lập sau đó.",
+    "expect_change": true,
+    "required_changed_paths": ["slugify.mjs"],
+    "allowed_changed_paths": ["slugify.mjs"],
+    "requires": ["node"],
+    "verify": ["node", "--test"]
+  },
+  {
+    "id": "go-regression",
+    "language": "go",
+    "route": "IMPLEMENT",
+    "fixture": "go-retry",
+    "prompt": "Sửa lỗi off-by-one trong Retry để maxAttempts là tổng số lần gọi tối đa như test yêu cầu. Không chạy terminal trong headless turn; smoke runner sẽ chạy go test độc lập.",
+    "expect_change": true,
+    "required_changed_paths": ["retry.go"],
+    "allowed_changed_paths": ["retry.go"],
+    "requires": ["go"],
+    "verify": ["go", "test", "./..."]
+  },
+  {
+    "id": "rust-regression",
+    "language": "rust",
+    "route": "IMPLEMENT",
+    "fixture": "rust-window",
+    "prompt": "Sửa hàm clamp_window để upper bound là inclusive như test yêu cầu. Không chạy terminal trong headless turn; smoke runner sẽ chạy cargo test độc lập.",
+    "expect_change": true,
+    "required_changed_paths": ["src/lib.rs"],
+    "allowed_changed_paths": ["src/lib.rs"],
+    "requires": ["cargo"],
+    "verify": ["cargo", "test", "--quiet"]
+  },
+  {
+    "id": "complex-security-persistence",
+    "language": "javascript",
+    "route": "COMPLEX_IMPLEMENT",
+    "fixture": "javascript-secure-store",
+    "prompt": "Sửa luồng ghi audit có public authorization contract, security boundary và persistence: chỉ admin được ghi, lần ghi bị từ chối tuyệt đối không được thay đổi store. Đây là thay đổi nhiều component có rủi ro cao; hãy thực hiện đầy đủ research/plan, implement, review và verify độc lập theo harness, gồm các nhánh subagent song song bắt buộc. Không chạy terminal trong headless turn; smoke runner sẽ chạy node --test độc lập. Dòng trạng thái cuối phải nêu route COMPLEX_IMPLEMENT.",
+    "expect_change": true,
+    "response_contains": ["COMPLEX_IMPLEMENT"],
+    "required_changed_paths": ["src/policy.mjs", "src/store.mjs"],
+    "allowed_changed_paths": ["src/policy.mjs", "src/store.mjs"],
+    "requires": ["node"],
+    "verify": ["node", "--test"]
+  }
+]

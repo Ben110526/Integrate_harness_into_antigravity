@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "harness-sentry": {
+      "serverUrl": "https://mcp.sentry.dev/mcp?skills=inspect",
+      "disabledTools": [
+        "update_issue",
+        "analyze_issue_with_seer",
+        "execute_sentry_tool"
+      ],
+      "disabled": true
+    }
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "mcpServers": {
+    "harness-context7": {
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp@4.0.3"],
+      "disabled": false
+    },
+    "harness-serena": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "serena-agent==1.7.0",
+        "serena",
+        "start-mcp-server",
+        "--context=antigravity",
+        "--enable-web-dashboard=false",
+        "--enable-gui-log-window=false",
+        "--open-web-dashboard=false"
+      ],
+      "disabledTools": [
+        "insert_after_symbol",
+        "insert_before_symbol",
+        "rename_symbol",
+        "replace_symbol_body",
+        "safe_delete_symbol",
+        "execute_shell_command",
+        "create_text_file",
+        "delete_lines",
+        "insert_at_line",
+        "replace_content",
+        "replace_in_files",
+        "replace_lines",
+        "remove_project",
+        "open_dashboard",
+        "delete_memory",
+        "edit_memory",
+        "rename_memory",
+        "write_memory",
+        "onboarding"
+      ],
+      "disabled": false
+    },
+    "harness-playwright": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@0.0.79",
+        "--isolated",
+        "--headless",
+        "--allowed-origins",
+        "http://localhost:*;http://127.0.0.1:*;https://localhost:*;https://127.0.0.1:*"
+      ],
+      "disabled": false
+    },
+    "harness-github": {
+      "command": "codex-harness-github-mcp-server",
+      "args": [
+        "stdio",
+        "--read-only",
+        "--lockdown-mode",
+        "--oauth-scopes=repo,read:org",
+        "--toolsets=context,repos,issues,pull_requests,actions,code_security,secret_protection"
+      ],
+      "disabled": false
+    },
+    "harness-sentry": {
+      "serverUrl": "https://mcp.sentry.dev/mcp?skills=inspect",
+      "disabledTools": [
+        "update_issue",
+        "analyze_issue_with_seer",
+        "execute_sentry_tool"
+      ],
+      "disabled": false
+    }
+  }
+}

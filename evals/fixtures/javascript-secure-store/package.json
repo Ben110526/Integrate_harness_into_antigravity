@@ -1,0 +1,8 @@
+{
+  "name": "harness-eval-javascript-secure-store",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  }
+}
