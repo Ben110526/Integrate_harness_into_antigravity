@@ -28,7 +28,21 @@ After updating the harness, start a new `agy` session. `/mcp` is only for diagno
 
 If a large repository does not yet have Serena metadata, run `uvx --from serena-agent==1.7.0 serena project create .` from its root. This official command creates `.serena/project.yml`; review the file before committing it, and add `--index` only when the initial indexing cost is acceptable.
 
-To add staging or preview origins for Playwright, set `HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS` when running the installer. Use a semicolon-separated list, for example `https://preview.example.com;https://staging.example.com:8443`. The installer appends that list to the default loopback origins and rejects wildcards, credentials, paths, queries, or fragments. Because the plugin configuration is loaded at session startup, start a new `agy` session after making this change.
+### Playwright network scope
+
+The AI decides when Playwright is needed. These installation choices only define the server's network scope:
+
+- Default: any HTTP(S) port on `localhost` and `127.0.0.1`.
+- All HTTP(S) origins on a trusted personal machine: `./install.sh --playwright-unrestricted` or `.\install.ps1 -PlaywrightUnrestricted`.
+- Exact staging or preview origins: set `HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS` to a semicolon-separated list while running the installer.
+
+Example exact allowlist:
+
+```bash
+HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS='https://preview.example.com;https://staging.example.com:8443' ./install.sh
+```
+
+The exact-origin mode retains the loopback defaults and rejects wildcards, credentials, paths, queries, and fragments. Unrestricted mode removes the origin filter but retains `--isolated`, `--headless`, and Antigravity's Ask permission. It cannot be combined with `--skip-mcp` or `HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS`. Rerun the installer without a network option to restore loopback-only behavior, start a new `agy` session after changing modes, and treat all external page content as untrusted.
 
 `./install.sh --skip-mcp` and `.\install.ps1 -SkipMcp` install the core-only harness without a root `mcp_config.json`. This is also the automatic fallback when Node/uvx is unavailable, a proxy or rate limit blocks the GitHub download, the checksum does not match, or the binary cannot be installed; no broken server is registered. Resolve the condition and rerun the installer normally to restore all five MCP servers.
 
