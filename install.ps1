@@ -1,6 +1,9 @@
 ﻿param(
     [Alias("skip-mcp")]
-    [switch]$SkipMcp
+    [switch]$SkipMcp,
+
+    [Alias("playwright-unrestricted")]
+    [switch]$PlaywrightUnrestricted
 )
 
 $ErrorActionPreference = "Stop"
@@ -21,6 +24,13 @@ $pythonRuntime = $null
 
 if ($env:HARNESS_SKIP_MCP_BOOTSTRAP -eq "1") {
     $SkipMcp = $true
+}
+
+if ($SkipMcp -and $PlaywrightUnrestricted) {
+    throw "-SkipMcp cannot be combined with -PlaywrightUnrestricted."
+}
+if ($PlaywrightUnrestricted -and -not [string]::IsNullOrEmpty($playwrightExtraOrigins)) {
+    throw "-PlaywrightUnrestricted cannot be combined with HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS."
 }
 
 if (-not (Test-Path $manifestPath -PathType Leaf)) {
@@ -213,16 +223,15 @@ function Resolve-HarnessPluginInstallSource {
         return
     }
 
-    $config = Get-Content $mcpConfigPath -Raw | ConvertFrom-Json
-    $arguments = [System.Collections.ArrayList]@($config.mcpServers."harness-playwright".args)
-    $allowlistIndex = $arguments.IndexOf("--allowed-origins")
-    if ($allowlistIndex -lt 0 -or $allowlistIndex + 1 -ge $arguments.Count) {
-        throw "Playwright allowlist argument is missing from mcp_config.json"
+    $playwrightMode = if ($script:PlaywrightUnrestricted) { "unrestricted" } else { "allowlist" }
+    $origins = $script:playwrightDefaultOrigins
+    if (-not [string]::IsNullOrEmpty($script:playwrightExtraOrigins)) {
+        $origins += ";$script:playwrightExtraOrigins"
     }
-    $arguments[$allowlistIndex + 1] = "$script:playwrightDefaultOrigins;$script:playwrightExtraOrigins"
-    $config.mcpServers."harness-playwright".args = $arguments.ToArray()
-    $json = $config | ConvertTo-Json -Depth 20
-    [System.IO.File]::WriteAllText($mcpConfigPath, "$json$([Environment]::NewLine)", (New-Object System.Text.UTF8Encoding($false)))
+    & node (Join-Path $script:packageRoot "scripts/configure-playwright-mcp.js") $mcpConfigPath $playwrightMode $origins
+    if ($LASTEXITCODE -ne 0) {
+        throw "Playwright MCP origin configuration failed."
+    }
 }
 
 if ($SkipMcp) {
@@ -380,6 +389,18 @@ if ($pluginInstallDir) {
 Write-Host "Dung lượng plugin: $pluginSize"
 Write-Host "Global policy    : $policyTarget"
 Write-Host "GitHub MCP       : $githubMcpStatus"
+if ($mcpEnabled -and $PlaywrightUnrestricted) {
+    Write-Host "Playwright MCP   : unrestricted origins (explicit opt-in)"
+}
+elseif ($mcpEnabled -and -not [string]::IsNullOrEmpty($playwrightExtraOrigins)) {
+    Write-Host "Playwright MCP   : loopback plus custom origin allowlist"
+}
+elseif ($mcpEnabled) {
+    Write-Host "Playwright MCP   : loopback origins only"
+}
+else {
+    Write-Host "Playwright MCP   : disabled with MCP bootstrap"
+}
 Write-Host "Tổng dung lượng  : $totalSize"
 Write-Host "Thành phần       : $componentSummary"
 Write-Host "Nguồn cài        : $packageRoot"

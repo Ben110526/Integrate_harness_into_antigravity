@@ -84,7 +84,36 @@ The plugin automatically registers namespaced MCP servers when the harness is in
 
 Context7 and Playwright automatically download pinned packages through `npx`; Serena downloads a pinned package through `uvx`; GitHub MCP uses the official release binary verified by the installer against its checksum; and Sentry uses the official endpoint with the `inspect` capability. GitHub runs with `--read-only --lockdown-mode`, Serena disables file/symbol editing tools, Sentry also disables update, AI-analysis, and catalog-execution tools, and every MCP server retains the default Ask permission.
 
-To let Playwright access additional staging or preview environments, provide an exact allowlist during installation, for example `HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS='https://preview.example.com;https://staging.example.com:8443' ./install.sh`. The installer always retains the four default loopback origins and rejects wildcards, credentials, paths, queries, and fragments. In PowerShell: `$env:HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS='https://preview.example.com'; .\install.ps1`.
+### Playwright network access
+
+The AI automatically decides when Playwright is needed. The following installation modes only define which network origins Playwright may access; they do not require the user to select MCP servers for each task.
+
+By default, Playwright can access HTTP(S) applications on any `localhost` or `127.0.0.1` port. No extra setup is required for local development.
+
+On a trusted personal development machine, allow Playwright to access any HTTP(S) origin:
+
+```bash
+./install.sh --playwright-unrestricted
+```
+
+Windows PowerShell:
+
+```powershell
+.\install.ps1 -PlaywrightUnrestricted
+```
+
+To allow only specific staging or preview origins instead:
+
+```bash
+HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS='https://preview.example.com;https://staging.example.com:8443' ./install.sh
+```
+
+```powershell
+$env:HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS = 'https://preview.example.com;https://staging.example.com:8443'
+.\install.ps1
+```
+
+Unrestricted mode removes the origin filter but retains `--isolated`, `--headless`, and Antigravity's Ask permission. It cannot be combined with `--skip-mcp` or `HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS`. Rerun the installer without either network option to restore the loopback-only default, then start a new `agy` session. Treat all external page content as untrusted.
 
 Large repositories can create the official Serena configuration with `uvx --from serena-agent==1.7.0 serena project create .`; this command creates `.serena/project.yml`, so review it and then commit or ignore it according to the project's conventions. Add `--index` to create the symbol cache immediately.
 

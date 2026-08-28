@@ -15,6 +15,7 @@ github_mcp_status="skipped"
 github_mcp_version="1.10.1"
 mcp_enabled="true"
 skip_mcp="false"
+playwright_unrestricted="false"
 playwright_default_origins='http://localhost:*;http://127.0.0.1:*;https://localhost:*;https://127.0.0.1:*'
 playwright_extra_origins="${HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS:-}"
 plugin_install_source="${plugin_dir}"
@@ -22,14 +23,18 @@ mcp_failure_reason=""
 python_runtime=""
 
 usage() {
-  printf 'Usage: %s [--skip-mcp]\n' "${0##*/}"
-  printf '  --skip-mcp  Install the core harness without starting or registering MCP servers.\n'
+  printf 'Usage: %s [--skip-mcp] [--playwright-unrestricted]\n' "${0##*/}"
+  printf '  --skip-mcp                 Install the core harness without starting or registering MCP servers.\n'
+  printf '  --playwright-unrestricted  Allow Playwright MCP to access all HTTP(S) origins.\n'
 }
 
 for argument in "$@"; do
   case "${argument}" in
     --skip-mcp)
       skip_mcp="true"
+      ;;
+    --playwright-unrestricted)
+      playwright_unrestricted="true"
       ;;
     -h|--help)
       usage
@@ -45,6 +50,15 @@ done
 
 if [[ "${HARNESS_SKIP_MCP_BOOTSTRAP:-0}" == "1" ]]; then
   skip_mcp="true"
+fi
+
+if [[ "${skip_mcp}" == "true" && "${playwright_unrestricted}" == "true" ]]; then
+  printf 'Error: --skip-mcp cannot be combined with --playwright-unrestricted.\n' >&2
+  exit 2
+fi
+if [[ "${playwright_unrestricted}" == "true" && -n "${playwright_extra_origins}" ]]; then
+  printf 'Error: --playwright-unrestricted cannot be combined with HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS.\n' >&2
+  exit 2
 fi
 
 cleanup() {
@@ -322,18 +336,14 @@ prepare_plugin_source() {
     return
   fi
 
-  HARNESS_MCP_CONFIG="${plugin_install_source}/mcp_config.json" \
-    HARNESS_PLAYWRIGHT_ORIGINS="${playwright_default_origins};${playwright_extra_origins}" \
-    node -e '
-      const fs = require("fs");
-      const path = process.env.HARNESS_MCP_CONFIG;
-      const config = JSON.parse(fs.readFileSync(path, "utf8"));
-      const args = config.mcpServers["harness-playwright"].args;
-      const index = args.indexOf("--allowed-origins");
-      if (index < 0 || index + 1 >= args.length) throw new Error("Playwright allowlist argument is missing");
-      args[index + 1] = process.env.HARNESS_PLAYWRIGHT_ORIGINS;
-      fs.writeFileSync(path, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
-    '
+  local playwright_mode="allowlist"
+  if [[ "${playwright_unrestricted}" == "true" ]]; then
+    playwright_mode="unrestricted"
+  fi
+  node "${package_root}/scripts/configure-playwright-mcp.js" \
+    "${plugin_install_source}/mcp_config.json" \
+    "${playwright_mode}" \
+    "${playwright_default_origins}${playwright_extra_origins:+;${playwright_extra_origins}}"
 }
 
 if [[ "${skip_mcp}" == "true" ]]; then
@@ -471,6 +481,15 @@ fi
 printf 'Dung lượng plugin: %s\n' "${plugin_size}"
 printf 'Global policy   : %s\n' "${policy_target}"
 printf 'GitHub MCP      : %s\n' "${github_mcp_status}"
+if [[ "${mcp_enabled}" == "true" && "${playwright_unrestricted}" == "true" ]]; then
+  printf 'Playwright MCP  : unrestricted origins (explicit opt-in)\n'
+elif [[ "${mcp_enabled}" == "true" && -n "${playwright_extra_origins}" ]]; then
+  printf 'Playwright MCP  : loopback plus custom origin allowlist\n'
+elif [[ "${mcp_enabled}" == "true" ]]; then
+  printf 'Playwright MCP  : loopback origins only\n'
+else
+  printf 'Playwright MCP  : disabled with MCP bootstrap\n'
+fi
 printf 'Tổng dung lượng  : %s\n' "${total_size}"
 printf 'Thành phần      : %s\n' "${component_summary}"
 printf 'Nguồn cài       : %s\n' "${package_root}"

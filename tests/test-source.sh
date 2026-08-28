@@ -184,6 +184,8 @@ if '"${target}" --version' not in install_sh or "& $target --version" not in ins
     raise SystemExit("installers must verify an existing GitHub MCP binary before the idempotent early return")
 if "--skip-mcp" not in install_sh or "SkipMcp" not in install_ps1:
     raise SystemExit("installers must expose an explicit core-only MCP skip option")
+if "--playwright-unrestricted" not in install_sh or "PlaywrightUnrestricted" not in install_ps1:
+    raise SystemExit("installers must expose an explicit unrestricted Playwright opt-in")
 if "HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS" not in install_sh or "HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS" not in install_ps1:
     raise SystemExit("installers must support a validated Playwright staging-origin allowlist")
 if "core-only" not in install_sh or "core-only" not in install_ps1:
@@ -290,6 +292,9 @@ trap cleanup EXIT
 fake_bin="${test_root}/bin"
 fake_home="${test_root}/home"
 fake_tmp="${test_root}/tmp"
+real_node="$(command -v node || true)"
+[[ -n "${real_node}" ]] || fail 'Node.js is required for installer fixture checks'
+export HARNESS_TEST_REAL_NODE="${real_node}"
 mkdir -p -- "${fake_bin}" "${fake_home}/.gemini" "${fake_tmp}"
 printf '# Existing user rule\n\n- Keep this line.\n' > "${fake_home}/.gemini/GEMINI.md"
 
@@ -320,6 +325,39 @@ required = {
 }
 if not required.issubset(origins):
     raise SystemExit(f"staged Playwright origins are incomplete: {origins}")
+PY
+    fi
+    if [[ "${EXPECT_PLAYWRIGHT_UNRESTRICTED:-0}" == "1" ]]; then
+      python3 - "${3:-}" <<'PY'
+import json
+import pathlib
+import sys
+
+config = json.loads((pathlib.Path(sys.argv[1]) / "mcp_config.json").read_text(encoding="utf-8"))
+args = config["mcpServers"]["harness-playwright"]["args"]
+if "--allowed-origins" in args:
+    raise SystemExit(f"unrestricted Playwright config retained its allowlist: {args}")
+if any("localhost" in argument or "127.0.0.1" in argument for argument in args):
+    raise SystemExit(f"unrestricted Playwright config retained an allowlist value: {args}")
+for required in ("--isolated", "--headless"):
+    if required not in args:
+        raise SystemExit(f"unrestricted Playwright config lost {required}: {args}")
+PY
+    fi
+    if [[ "${EXPECT_PLAYWRIGHT_LOOPBACK_ONLY:-0}" == "1" ]]; then
+      python3 - "${3:-}" <<'PY'
+import json
+import pathlib
+import sys
+
+config = json.loads((pathlib.Path(sys.argv[1]) / "mcp_config.json").read_text(encoding="utf-8"))
+args = config["mcpServers"]["harness-playwright"]["args"]
+if args.count("--allowed-origins") != 1:
+    raise SystemExit(f"default Playwright config has an invalid allowlist pair: {args}")
+origins = args[args.index("--allowed-origins") + 1]
+expected = "http://localhost:*;http://127.0.0.1:*;https://localhost:*;https://127.0.0.1:*"
+if origins != expected:
+    raise SystemExit(f"default Playwright origins were not restored: {origins}")
 PY
     fi
     exit 0
@@ -394,20 +432,8 @@ if [[ "${1:-}" == "--version" ]]; then
   printf 'v20.18.1\n'
   exit 0
 fi
-if [[ "${1:-}" == "-e" ]]; then
-  python3 - <<'PY'
-import json
-import os
-from pathlib import Path
-
-path = Path(os.environ["HARNESS_MCP_CONFIG"])
-config = json.loads(path.read_text(encoding="utf-8"))
-args = config["mcpServers"]["harness-playwright"]["args"]
-index = args.index("--allowed-origins")
-args[index + 1] = os.environ["HARNESS_PLAYWRIGHT_ORIGINS"]
-path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-PY
-  exit 0
+if [[ "${1:-}" == */scripts/configure-playwright-mcp.js ]]; then
+  exec "${HARNESS_TEST_REAL_NODE:?}" "$@"
 fi
 exit 2
 SH
@@ -422,6 +448,30 @@ HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${fake_bin}:${PATH}" \
   HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS='https://preview.example.com:8443' \
   EXPECT_PLAYWRIGHT_ORIGIN='https://preview.example.com:8443' \
   ./install.sh > "${test_root}/install-custom-origin.log"
+
+HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${fake_bin}:${PATH}" \
+  EXPECT_PLAYWRIGHT_UNRESTRICTED=1 \
+  ./install.sh --playwright-unrestricted > "${test_root}/install-unrestricted.log"
+
+HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${fake_bin}:${PATH}" \
+  EXPECT_PLAYWRIGHT_LOOPBACK_ONLY=1 \
+  ./install.sh > "${test_root}/install-loopback-restored.log"
+
+set +e
+HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${fake_bin}:${PATH}" \
+  HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS='https://preview.example.com' \
+  ./install.sh --playwright-unrestricted > "${test_root}/install-conflicting-origin.log" 2>&1
+conflicting_origin_status="$?"
+HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${fake_bin}:${PATH}" \
+  ./install.sh --skip-mcp --playwright-unrestricted > "${test_root}/install-conflicting-mode.log" 2>&1
+conflicting_mode_status="$?"
+set -e
+[[ "${conflicting_origin_status}" == "2" ]] || fail 'installer did not reject conflicting Playwright origin modes'
+[[ "${conflicting_mode_status}" == "2" ]] || fail 'installer did not reject skip-MCP with unrestricted Playwright'
+grep -Fq 'cannot be combined with HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS' "${test_root}/install-conflicting-origin.log" || \
+  fail 'installer did not explain the Playwright origin-mode conflict'
+grep -Fq 'cannot be combined with --playwright-unrestricted' "${test_root}/install-conflicting-mode.log" || \
+  fail 'installer did not explain the skip-MCP conflict'
 
 if HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${fake_bin}:${PATH}" \
   HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS='https://*.example.com' \
