@@ -1,0 +1,4 @@
+.DS_Store
+.harness-eval.*
+__pycache__/
+docs/local-audit.md

@@ -1,0 +1,5 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "codex-claude-harness",
+  "description": "Accuracy-focused engineering workflows, independent subagents, verification gating, automatic AI-selected MCP capabilities, and safety for the first-party Antigravity client."
+}

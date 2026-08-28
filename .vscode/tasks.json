@@ -1,0 +1,110 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Harness: Antigravity (interactive)",
+      "type": "process",
+      "command": "agy",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "runOptions": {
+        "runOn": "default"
+      },
+      "presentation": {
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Harness: Doctor",
+      "type": "process",
+      "command": "bash",
+      "windows": {
+        "command": "bash.exe"
+      },
+      "args": [
+        "./doctor.sh"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "runOptions": {
+        "runOn": "default"
+      },
+      "presentation": {
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Harness: Deterministic source checks",
+      "type": "process",
+      "command": "bash",
+      "windows": {
+        "command": "powershell.exe",
+        "args": [
+          "-NoProfile",
+          "-Command",
+          "if (Get-Command py -ErrorAction SilentlyContinue) { py -3 -m unittest discover -s tests -v } elseif (Get-Command python -ErrorAction SilentlyContinue) { python -m unittest discover -s tests -v } else { Write-Error 'Python 3.8+ is required'; exit 1 }; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; & ./tests/Test-Install.ps1"
+        ]
+      },
+      "args": [
+        "./tests/test-source.sh"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "group": "test",
+      "runOptions": {
+        "runOn": "default"
+      },
+      "presentation": {
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Harness: Interactive read-only review",
+      "type": "process",
+      "command": "agy",
+      "args": [
+        "--prompt-interactive",
+        "${input:harnessReviewPrompt}",
+        "--model",
+        "gemini-3.7-flash-high",
+        "--effort",
+        "high",
+        "--sandbox",
+        "--mode=plan",
+        "--new-project"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "runOptions": {
+        "runOn": "default"
+      },
+      "presentation": {
+        "reveal": "always",
+        "focus": false,
+        "panel": "dedicated"
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "harnessReviewPrompt",
+      "type": "promptString",
+      "description": "Interactive read-only review request (do not paste credentials or private data)",
+      "default": "Review the current workspace without modifying files. Report correctness, security, regression, and missing-test findings with file and line evidence."
+    }
+  ]
+}

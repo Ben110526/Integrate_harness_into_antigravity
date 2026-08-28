@@ -1,0 +1,39 @@
+{
+  "mcpServers": {
+    "harness-serena": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "serena-agent==1.7.0",
+        "serena",
+        "start-mcp-server",
+        "--context=antigravity",
+        "--enable-web-dashboard=false",
+        "--enable-gui-log-window=false",
+        "--open-web-dashboard=false"
+      ],
+      "disabledTools": [
+        "insert_after_symbol",
+        "insert_before_symbol",
+        "rename_symbol",
+        "replace_symbol_body",
+        "safe_delete_symbol",
+        "execute_shell_command",
+        "create_text_file",
+        "delete_lines",
+        "insert_at_line",
+        "replace_content",
+        "replace_in_files",
+        "replace_lines",
+        "remove_project",
+        "open_dashboard",
+        "delete_memory",
+        "edit_memory",
+        "rename_memory",
+        "write_memory",
+        "onboarding"
+      ],
+      "disabled": true
+    }
+  }
+}

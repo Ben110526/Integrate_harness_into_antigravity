@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "harness-playwright": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@0.0.79",
+        "--isolated",
+        "--headless",
+        "--allowed-origins",
+        "http://localhost:*;http://127.0.0.1:*;https://localhost:*;https://127.0.0.1:*"
+      ],
+      "disabled": true
+    }
+  }
+}

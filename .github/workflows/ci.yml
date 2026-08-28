@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  source-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.8"
+
+      - name: Install shell tooling
+        run: sudo apt-get update && sudo apt-get install --yes shellcheck
+
+      - name: Run source and installer fixture checks
+        run: ./tests/test-source.sh
+
+      - name: Run lifecycle and verification hook tests
+        run: python3 -m unittest -v tests/test_verification_gate.py tests/test_lifecycle_guard.py
+
+      - name: Run ShellCheck
+        run: shellcheck install.sh doctor.sh install.command scripts/update-checksums.sh tests/test-source.sh evals/run-smoke.sh
+
+      - name: Run PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser -Force
+          $findings = @(
+            Invoke-ScriptAnalyzer -Path ./install.ps1 -Severity Warning,Error -ExcludeRule PSAvoidUsingWriteHost
+            Invoke-ScriptAnalyzer -Path ./tests/Test-Install.ps1 -Severity Warning,Error -ExcludeRule PSAvoidUsingWriteHost
+          )
+          $findings | Format-Table -AutoSize
+          if ($findings) { exit 1 }
+
+      - name: Run PowerShell installer fixture checks
+        shell: pwsh
+        run: ./tests/Test-Install.ps1
+
+      - name: Confirm checks did not modify tracked files
+        run: git diff --exit-code
+
+  platform-checks:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.9"
+
+      - name: Run macOS source checks
+        if: runner.os == 'macOS'
+        run: |
+          ./tests/test-source.sh
+          python3 -m unittest -v tests/test_verification_gate.py tests/test_lifecycle_guard.py
+
+      - name: Run Windows lifecycle and verification hook tests
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: python -m unittest -v tests/test_verification_gate.py tests/test_lifecycle_guard.py
+
+      - name: Run Windows installer fixture checks
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tests/Test-Install.ps1
+
+      - name: Run Windows PowerShell 5.1 installer fixture checks
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./tests/Test-Install.ps1

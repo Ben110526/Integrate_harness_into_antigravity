@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "harness-github": {
+      "command": "codex-harness-github-mcp-server",
+      "args": [
+        "stdio",
+        "--read-only",
+        "--lockdown-mode",
+        "--oauth-scopes=repo,read:org",
+        "--toolsets=context,repos,issues,pull_requests,actions,code_security,secret_protection"
+      ],
+      "disabled": true
+    }
+  }
+}
