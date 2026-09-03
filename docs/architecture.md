@@ -137,6 +137,24 @@ Relevant Antigravity documentation:
 - [Subagents](https://antigravity.google/docs/subagents)
 - [Plans and Google AI Pro quota](https://antigravity.google/docs/plans/)
 
+## Maintainer Workflows
+
+When updating the GitHub MCP server version, maintainers run:
+
+```bash
+./scripts/update-checksums.sh <version>
+```
+
+The script accepts a semantic version string (e.g. `1.10.1`), downloads the official checksum manifest (`github-mcp-server_<version>_checksums.txt`) over HTTPS (`--proto '=https' --tlsv1.2`) directly from the GitHub MCP server release, verifies the SHA-256 hashes for all seven release assets (`Darwin_arm64`, `Darwin_x86_64`, `Linux_arm64`, `Linux_x86_64`, `Windows_arm64`, `Windows_i386`, and `Windows_x86_64`), and atomically updates:
+
+- The pinned version and archive checksums in `install.sh`.
+- The pinned version and archive checksums in `install.ps1`.
+- The expected version and checksum assertions in `tests/test-source.sh`.
+- The diagnostic version check in `doctor.sh`.
+- The documentation reference in `plugin/codex-claude-harness/skills/harness-mcp-profile/references/profiles.md`.
+
+Maintainers must always run `./tests/test-source.sh` to confirm that all checksum assertions and installer tests pass before committing.
+
 ## If the Codex or Claude UI Is Required Later
 
 Once a valid API key is available, build a separate gateway with golden tests for streaming, tool calls, tool results, cancellation, retries, and long context. For Codex, the gateway must expose the Responses API; for Claude Code, the supported upstream must still be Claude. A consumer subscription does not replace API entitlement.
