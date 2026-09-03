@@ -159,6 +159,49 @@ class VerificationGateTests(unittest.TestCase):
         self.command(3, "python3 -m pytest -q")
         self.assertEqual(self.stop(), {"decision": "allow"})
 
+    def test_static_check_does_not_satisfy_logic_write(self) -> None:
+        self.write(step=1, target=self.workspace / "src" / "auth.py")
+        self.command(2, "git diff --check")
+
+        result = self.stop()
+
+        self.assertEqual(result["decision"], "continue")
+        self.assertIn("behavioral", result["reason"].lower())
+
+    def test_static_check_satisfies_documentation_write(self) -> None:
+        self.write(step=1, target=self.workspace / "README.md")
+        self.command(2, "git diff --check")
+        self.assertEqual(self.stop(), {"decision": "allow"})
+
+    def test_build_only_does_not_satisfy_logic_write(self) -> None:
+        self.write(step=1, target=self.workspace / "src" / "index.ts")
+        self.command(2, "npm run build")
+        self.assertEqual(self.stop()["decision"], "continue")
+
+    def test_behavioral_evidence_remains_valid_after_later_static_check(self) -> None:
+        self.write(step=1, target=self.workspace / "src" / "index.ts")
+        self.command(2, "npm test")
+        self.command(3, "npm run lint")
+        self.assertEqual(self.stop(), {"decision": "allow"})
+
+    def test_unknown_terminal_mutation_requires_behavioral_evidence(self) -> None:
+        self.command(1, "python scripts/generate.py")
+        self.command(2, "git diff --check")
+        self.assertEqual(self.stop()["decision"], "continue")
+        self.command(3, "pytest -q")
+        self.assertEqual(self.stop(), {"decision": "allow"})
+
+    def test_state_records_only_workspace_relative_modified_paths(self) -> None:
+        target = self.workspace / "src" / "auth.py"
+        self.write(step=1, target=target)
+
+        state = json.loads(
+            (self.artifacts / GATE_MODULE.STATE_FILE).read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(state["modifiedPaths"], ["src/auth.py"])
+        self.assertNotIn(str(self.workspace), json.dumps(state))
+
     def test_python_unittest_module_is_evidence(self) -> None:
         self.write()
         self.command(2, "python -m unittest discover")
@@ -276,20 +319,119 @@ class VerificationGateTests(unittest.TestCase):
         self.command(2, "playwright")
         self.assertEqual(self.stop()["decision"], "continue")
 
-    def test_shell_syntax_check_is_evidence(self) -> None:
-        self.write()
+    def test_shell_syntax_check_is_static_only_for_shell_write(self) -> None:
+        self.write(target=self.workspace / "install.sh")
         self.command(2, "bash -n install.sh")
+        self.assertEqual(self.stop()["decision"], "continue")
+
+    def test_unknown_and_executable_file_types_require_behavioral_evidence(self) -> None:
+        paths = ("Widget.svelte", "page.astro", "main.dart", "Dockerfile", "bin/tool")
+        state_path = self.artifacts / GATE_MODULE.STATE_FILE
+        for relative_path in paths:
+            with self.subTest(path=relative_path):
+                state_path.unlink(missing_ok=True)
+                self.write(target=self.workspace / relative_path)
+                self.command(2, "git diff --check")
+                self.assertEqual(self.stop()["decision"], "continue")
+
+    def test_known_documentation_files_accept_static_evidence(self) -> None:
+        paths = (
+            "README", "README.txt", "CHANGELOG.md", "docs/guide.rst", ".gitignore"
+        )
+        state_path = self.artifacts / GATE_MODULE.STATE_FILE
+        for relative_path in paths:
+            with self.subTest(path=relative_path):
+                state_path.unlink(missing_ok=True)
+                self.write(target=self.workspace / relative_path)
+                self.command(2, "git diff --check")
+                self.assertEqual(self.stop(), {"decision": "allow"})
+
+    def test_non_executing_test_modes_are_static_only(self) -> None:
+        commands = (
+            "pytest --collect-only",
+            "pytest --co",
+            "cargo test --no-run",
+            "mvn package -DskipTests",
+            "mvn verify -Dmaven.test.skip=true",
+            "./gradlew :app:test -x :app:test",
+            "playwright test --list",
+            "jest --listTests",
+            "vitest list",
+            "dotnet test --list-tests",
+            "cargo test -- --list",
+            "ctest -N",
+            "tox -l",
+            "nox --list-sessions",
+            "npm test -- --listTests",
+            "./gradlew test --dry-run",
+            "./gradlew test -m",
+            "dotnet test -t",
+            "ctest --show-only=json-v1",
+        )
+        state_path = self.artifacts / GATE_MODULE.STATE_FILE
+        for command in commands:
+            with self.subTest(command=command):
+                state_path.unlink(missing_ok=True)
+                self.write(target=self.workspace / "src" / "logic.py")
+                self.command(2, command)
+                self.assertEqual(self.stop()["decision"], "continue")
+
+    def test_ambiguous_text_and_mdx_files_default_to_behavioral(self) -> None:
+        paths = ("requirements.txt", "pages/index.mdx")
+        state_path = self.artifacts / GATE_MODULE.STATE_FILE
+        for relative_path in paths:
+            with self.subTest(path=relative_path):
+                state_path.unlink(missing_ok=True)
+                self.write(target=self.workspace / relative_path)
+                self.command(2, "git diff --check")
+                self.assertEqual(self.stop()["decision"], "continue")
+
+    def test_gradle_ignores_properties_and_preserves_unexcluded_tests(self) -> None:
+        self.write(target=self.workspace / "src" / "logic.kt")
+        self.command(2, "./gradlew help -Pmode=test")
+        self.assertEqual(self.stop()["decision"], "continue")
+
+        (self.artifacts / GATE_MODULE.STATE_FILE).unlink(missing_ok=True)
+        self.write(target=self.workspace / "src" / "logic.kt")
+        self.command(2, "./gradlew test -x integrationTest")
         self.assertEqual(self.stop(), {"decision": "allow"})
+
+    def test_gradle_consumes_option_values_and_matches_unscoped_exclusions(self) -> None:
+        state_path = self.artifacts / GATE_MODULE.STATE_FILE
+        for command in (
+            "./gradlew help --project-dir test",
+            "./gradlew :app:test -x test",
+        ):
+            with self.subTest(command=command):
+                state_path.unlink(missing_ok=True)
+                self.write(target=self.workspace / "src" / "logic.kt")
+                self.command(2, command)
+                self.assertEqual(self.stop()["decision"], "continue")
+
+    def test_dotnet_and_node_tests_are_behavioral_evidence(self) -> None:
+        state_path = self.artifacts / GATE_MODULE.STATE_FILE
+        for command in (
+            "dotnet test",
+            "node --test",
+            "composer test",
+            "./gradlew :app:test",
+            "xcodebuild test-without-building",
+        ):
+            with self.subTest(command=command):
+                state_path.unlink(missing_ok=True)
+                self.write(target=self.workspace / "src" / "logic.ts")
+                self.command(2, command)
+                self.assertEqual(self.stop(), {"decision": "allow"})
 
     def test_clang_format_requires_real_dry_run_check(self) -> None:
         self.write()
         self.command(2, "clang-format file.cpp")
         self.assertEqual(self.stop()["decision"], "continue")
 
-    def test_clang_format_dry_run_werror_is_evidence(self) -> None:
-        self.write()
+    def test_clang_format_dry_run_is_static_only_for_logic_write(self) -> None:
+        self.write(target=self.workspace / "file.cpp")
         self.command(2, "clang-format --dry-run --Werror file.cpp")
-        self.assertEqual(self.stop(), {"decision": "allow"})
+        self.assertEqual(self.stop()["decision"], "continue")
 
     def test_failed_in_place_clang_format_resets_evidence(self) -> None:
         self.write()
@@ -362,6 +504,20 @@ class VerificationGateTests(unittest.TestCase):
     def test_ordered_mutation_then_verification_allows_stop(self) -> None:
         self.write()
         self.command(2, "prettier --write src && npm test")
+        self.assertEqual(self.stop(), {"decision": "allow"})
+
+    def test_ordered_mutation_then_static_check_requires_behavioral_check(self) -> None:
+        self.command(1, "prettier --write src && git diff --check")
+        self.assertEqual(self.stop()["decision"], "continue")
+
+    def test_behavioral_check_before_latest_mutation_does_not_count(self) -> None:
+        self.write()
+        self.command(2, "npm test && prettier --write src && git diff --check")
+        self.assertEqual(self.stop()["decision"], "continue")
+
+    def test_behavioral_check_after_latest_mutation_survives_static_tail(self) -> None:
+        self.write()
+        self.command(2, "prettier --write src && npm test && git diff --check")
         self.assertEqual(self.stop(), {"decision": "allow"})
 
     def test_ordered_verification_then_mutation_requires_recheck(self) -> None:

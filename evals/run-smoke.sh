@@ -83,10 +83,13 @@ PY
   route="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])]["route"])' "${cases_path}" "${case_index}")"
   expect_change="$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])]["expect_change"]).lower())' "${cases_path}" "${case_index}")"
   expect_response_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("response_contains", [])))' "${cases_path}" "${case_index}")"
+  reject_response_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("response_not_contains", [])))' "${cases_path}" "${case_index}")"
+  only_response_lines_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("response_only_lines", [])))' "${cases_path}" "${case_index}")"
   required_changed_paths_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("required_changed_paths", [])))' "${cases_path}" "${case_index}")"
   allowed_changed_paths_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])]["allowed_changed_paths"]))' "${cases_path}" "${case_index}")"
   requires_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("requires", [])))' "${cases_path}" "${case_index}")"
   verify_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])]["verify"]))' "${cases_path}" "${case_index}")"
+  acceptance_criteria_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("acceptance_criteria", [])))' "${cases_path}" "${case_index}")"
   case_dir="${eval_root}/${case_id}"
   response_path="${eval_root}/${case_id}.json"
 
@@ -140,7 +143,7 @@ PY
     sleep 5
     if ! (
       cd "${case_dir}"
-      agy -p 'Tiếp tục công việc đang chờ, thu thập kết quả subagent bắt buộc và hoàn tất câu trả lời với dòng Harness.' \
+      agy -p 'Continue the pending work, collect all required subagent results, and finish the response with a Harness status line.' \
         --conversation "${conversation_id}" --model "${model}" \
         --add-dir "${case_dir}" --sandbox --mode=accept-edits \
         --output-format json --print-timeout 15m
@@ -157,7 +160,7 @@ PY
     continue
   fi
 
-  if ! python3 - "${response_path}" "${expect_response_json}" "${route}" <<'PY'
+  if ! python3 - "${response_path}" "${expect_response_json}" "${reject_response_json}" "${only_response_lines_json}" "${route}" <<'PY'
 import json
 import sys
 
@@ -168,7 +171,7 @@ if response.get("status") != "SUCCESS":
 text = response.get("response", "")
 if "Harness:" not in text:
     raise SystemExit("missing Harness status line")
-expected_route = sys.argv[3]
+expected_route = sys.argv[5]
 reported_routes = [
     line.strip().partition(":")[2].split(";", 1)[0].strip()
     for line in text.splitlines()
@@ -179,6 +182,18 @@ if expected_route not in reported_routes:
 missing = [term for term in json.loads(sys.argv[2]) if term not in text]
 if missing:
     raise SystemExit(f"missing expected response terms: {missing}")
+folded_text = text.casefold()
+forbidden = [
+    term for term in json.loads(sys.argv[3])
+    if term.casefold() in folded_text
+]
+if forbidden:
+    raise SystemExit(f"response contains forbidden terms: {forbidden}")
+only_lines = json.loads(sys.argv[4])
+if only_lines:
+    nonblank = [line.strip() for line in text.splitlines() if line.strip()]
+    if nonblank != only_lines:
+        raise SystemExit(f"unexpected response lines: expected exactly {only_lines}")
 PY
   then
     printf '[fail] %s: invalid response envelope\n' "${case_id}" >&2
@@ -213,6 +228,24 @@ subprocess.run(json.loads(sys.argv[2]), cwd=sys.argv[1], check=True)
 PY
     then
       printf '[fail] %s: deterministic verification failed\n' "${case_id}" >&2
+      print_response_diagnostic "${response_path}"
+      failures=$((failures + 1))
+    fi
+  fi
+
+  if [[ "${acceptance_criteria_json}" != '[]' ]]; then
+    if ! python3 - "${case_dir}" "${acceptance_criteria_json}" <<'PY'
+import json
+import subprocess
+import sys
+
+case_dir = sys.argv[1]
+for criterion in json.loads(sys.argv[2]):
+    print(f"[acceptance] {criterion['id']}: {criterion['description']}")
+    subprocess.run(criterion["verify"], cwd=case_dir, check=True)
+PY
+    then
+      printf '[fail] %s: acceptance criterion verification failed\n' "${case_id}" >&2
       print_response_diagnostic "${response_path}"
       failures=$((failures + 1))
     fi

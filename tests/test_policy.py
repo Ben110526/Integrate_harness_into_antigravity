@@ -43,6 +43,7 @@ class PolicyTests(unittest.TestCase):
             "PreToolUse",
             "PreInvocation",
             "HARNESS_AUTO_FORMAT=1",
+            "stable `AC-*` IDs",
             'invoke_subagent(TypeName=..., Role=..., Workspace="inherit", Prompt=...)',
             "Harness: <ROUTE>; passed: ...; failed/skipped: ...",
             "mcp(*)",

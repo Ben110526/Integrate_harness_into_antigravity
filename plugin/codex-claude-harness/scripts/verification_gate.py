@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Bounded Stop hook that requires post-write verification evidence.
+"""Bounded Stop hook that requires scope-appropriate post-write evidence.
 
-The hook records only step numbers and a short evidence label in the
-conversation artifact directory. It never executes project checks itself.
+The hook records step numbers, short evidence labels, and bounded workspace-
+relative changed paths in the conversation artifact directory. It never
+executes project checks itself.
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ WRITE_TOOLS = {
     "multi_replace_file_content",
 }
 MAX_GATE_RETRIES = 1
+MAX_MODIFIED_PATHS = 32
 NO_CHECK_MARKER = "HARNESS_NO_RUNNABLE_CHECK:"
 EVIDENCE = "evidence"
 MUTATION = "mutation"
@@ -52,6 +54,16 @@ _SCRIPT_MUTATION_NAME = re.compile(
 _TEMP_STATE_NAME = re.compile(
     rf"^{re.escape(TEMP_STATE_PREFIX)}[0-9a-f]{{24}}\.json$"
 )
+_SCRIPT_BEHAVIOR_NAME = re.compile(
+    r"(?:^|[-_.])(?:test|tests|spec|specs)(?:[-_.]|$)",
+    re.IGNORECASE,
+)
+_STATIC_DOCUMENT_SUFFIXES = {".adoc", ".md", ".rst"}
+_AMBIGUOUS_DOCUMENT_SUFFIXES = {".mdx", ".txt"}
+_STATIC_DOCUMENT_NAMES = {
+    ".editorconfig", ".gitattributes", ".gitignore", "authors", "changelog",
+    "code_of_conduct", "contributing", "license", "notice", "readme",
+}
 
 
 def _emit(value: dict[str, Any]) -> None:
@@ -380,6 +392,47 @@ def _is_workspace_write(args: dict[str, Any], payload: dict[str, Any]) -> bool:
     return any(_is_within(candidate, root) for root in roots)
 
 
+def _workspace_relative_target(
+    args: dict[str, Any], payload: dict[str, Any]
+) -> Optional[str]:
+    target = args.get("TargetFile")
+    if not isinstance(target, str) or not target.strip():
+        return None
+    roots = [
+        _as_local_path(root)
+        for root in payload.get("workspacePaths", [])
+        if isinstance(root, str) and root.strip()
+    ]
+    candidate = _as_local_path(target)
+    if not roots:
+        return candidate.name[:240] if candidate.is_absolute() else candidate.as_posix()[:240]
+    if not candidate.is_absolute():
+        candidate = roots[0] / candidate
+    for root in roots:
+        try:
+            relative = candidate.resolve(strict=False).relative_to(root.resolve(strict=False))
+        except (OSError, ValueError):
+            continue
+        value = relative.as_posix()
+        return value[:240] if value and value != "." else None
+    return None
+
+
+def _requires_behavioral_verification(path: Optional[str]) -> bool:
+    if path is None:
+        return True
+    candidate = Path(path)
+    suffix = candidate.suffix.casefold()
+    name = candidate.name.casefold()
+    stem = candidate.stem.casefold()
+    is_document = (
+        suffix in _STATIC_DOCUMENT_SUFFIXES
+        or name in _STATIC_DOCUMENT_NAMES
+        or (suffix in _AMBIGUOUS_DOCUMENT_SUFFIXES and stem in _STATIC_DOCUMENT_NAMES)
+    )
+    return not is_document
+
+
 def _command(args: dict[str, Any]) -> str:
     for key in ("CommandLine", "command", "Command"):
         value = args.get(key)
@@ -479,6 +532,14 @@ def _script_name_is_mutation(value: str) -> bool:
     return bool(_SCRIPT_MUTATION_NAME.search(stem))
 
 
+def _script_name_is_behavioral(value: str) -> bool:
+    name = value.replace("\\", "/").rsplit("/", 1)[-1]
+    stem, dot, extension = name.rpartition(".")
+    if not dot or extension.casefold() not in {"sh", "py", "ps1", "cmd", "bat"}:
+        return False
+    return bool(_SCRIPT_BEHAVIOR_NAME.search(stem))
+
+
 def _named(value: str, names: set[str]) -> bool:
     value = value.casefold()
     return any(value == name or value.startswith(f"{name}:") for name in names)
@@ -486,6 +547,73 @@ def _named(value: str, names: set[str]) -> bool:
 
 def _has_flag(values: list[str], flags: set[str]) -> bool:
     return any(value.casefold() in flags for value in values)
+
+
+def _gradle_task_key(value: str) -> Optional[str]:
+    if not value or value.startswith("-") or "=" in value:
+        return None
+    return value.casefold()
+
+
+def _gradle_task_is_verification(value: str) -> bool:
+    key = _gradle_task_key(value)
+    if key is None:
+        return False
+    task = key.rsplit(":", 1)[-1]
+    return task in {"build", "check", "test"} or task.endswith("test")
+
+
+def _gradle_task_is_behavioral(value: str) -> bool:
+    key = _gradle_task_key(value)
+    if key is None:
+        return False
+    task = key.rsplit(":", 1)[-1]
+    return task in {"check", "test"} or task.endswith("test")
+
+
+def _gradle_tasks(values: list[str]) -> tuple[set[str], set[str]]:
+    requested: set[str] = set()
+    excluded: set[str] = set()
+    options_with_values = {
+        "-b", "--build-file", "-c", "--settings-file", "-g",
+        "--gradle-user-home", "--include-build", "--max-workers", "-p",
+        "--project-cache-dir", "--project-dir",
+    }
+    index = 0
+    while index < len(values):
+        value = values[index]
+        lowered = value.casefold()
+        if lowered in {"-x", "--exclude-task"}:
+            if index + 1 < len(values):
+                key = _gradle_task_key(values[index + 1])
+                if key is not None:
+                    excluded.add(key)
+            index += 2
+            continue
+        if lowered in options_with_values:
+            index += 2
+            continue
+        if lowered.startswith("--exclude-task="):
+            key = _gradle_task_key(value.split("=", 1)[1])
+            if key is not None:
+                excluded.add(key)
+            index += 1
+            continue
+        key = _gradle_task_key(value)
+        if key is not None:
+            requested.add(key)
+        index += 1
+    return requested, excluded
+
+
+def _gradle_task_is_excluded(requested: str, excluded: set[str]) -> bool:
+    if requested in excluded:
+        return True
+    requested_leaf = requested.rsplit(":", 1)[-1]
+    return any(
+        ":" not in excluded_task and excluded_task == requested_leaf
+        for excluded_task in excluded
+    )
 
 
 def _classify_coverage_run(args: list[str], depth: int) -> str:
@@ -709,7 +837,10 @@ def _classify_simple(values: list[str], depth: int = 0) -> str:
     if executable in {"mvn", "mvnw"}:
         return EVIDENCE if any(value in {"test", "verify", "package"} for value in lowered) else NEUTRAL
     if executable in {"gradle", "gradlew"}:
-        return EVIDENCE if any(value in {"test", "check", "build"} for value in lowered) else NEUTRAL
+        requested, _ = _gradle_tasks(args)
+        return EVIDENCE if any(
+            _gradle_task_is_verification(value) for value in requested
+        ) else NEUTRAL
     if executable in {"bazel", "buck", "buck2"}:
         return EVIDENCE if lowered[:1] in (["test"], ["build"]) else NEUTRAL
     if executable == "deno":
@@ -731,7 +862,7 @@ def _classify_simple(values: list[str], depth: int = 0) -> str:
         "rspec", "phpunit",
     }:
         return EVIDENCE
-    if executable == "node" and "--check" in lowered:
+    if executable == "node" and any(value in {"--check", "--test"} for value in lowered):
         return EVIDENCE
     if executable == "ruby" and "-c" in lowered:
         return EVIDENCE
@@ -748,7 +879,10 @@ def _classify_simple(values: list[str], depth: int = 0) -> str:
     if executable == "swift":
         return EVIDENCE if lowered[:1] in (["test"], ["build"]) else NEUTRAL
     if executable == "xcodebuild":
-        return EVIDENCE if any(value in {"test", "build"} for value in lowered) else NEUTRAL
+        return EVIDENCE if any(
+            value in {"build", "build-for-testing", "test", "test-without-building"}
+            for value in lowered
+        ) else NEUTRAL
     if executable == "pre-commit":
         return EVIDENCE if lowered[:1] == ["run"] else NEUTRAL
     if executable == "agy":
@@ -879,6 +1013,161 @@ def _classify_command(command: str, depth: int = 0) -> tuple[str, str, bool]:
     return latest, "", contains_mutation
 
 
+def _simple_has_behavioral_evidence(values: list[str], depth: int = 0) -> bool:
+    values = _strip_prefixes(values)
+    if not values or _classify_simple(values, depth) != EVIDENCE:
+        return False
+    executable = _executable(values[0])
+    args = values[1:]
+    lowered = [value.casefold() for value in args]
+
+    if depth < 2 and executable in {"bash", "sh", "zsh"}:
+        for option in ("-c", "-lc"):
+            if option in lowered:
+                index = lowered.index(option)
+                return index + 1 < len(args) and _command_has_behavioral_evidence(
+                    args[index + 1], depth + 1
+                )
+        return any(_script_name_is_behavioral(value) for value in args)
+    if depth < 2 and executable in {"powershell", "pwsh"}:
+        for option in ("-command", "-c"):
+            if option in lowered:
+                index = lowered.index(option)
+                return index + 1 < len(args) and _command_has_behavioral_evidence(
+                    " ".join(args[index + 1 :]), depth + 1
+                )
+        return any(_script_name_is_behavioral(value) for value in args)
+    if depth < 2 and executable == "cmd" and lowered[:1] in (["/c"], ["-c"]):
+        return _command_has_behavioral_evidence(" ".join(args[1:]), depth + 1)
+    if depth < 2 and executable in {"npx", "bunx"} and args:
+        return _simple_has_behavioral_evidence(args, depth + 1)
+    if depth < 2 and executable == "pnpm" and lowered[:1] == ["dlx"]:
+        return _simple_has_behavioral_evidence(args[1:], depth + 1)
+
+    if executable in {
+        "pytest", "py.test", "unittest", "doctest", "trial", "twisted.trial",
+        "pytest-bdd", "pytest_bdd", "jest", "vitest", "mocha",
+    }:
+        if executable in {"pytest", "py.test", "pytest-bdd", "pytest_bdd"} and _has_flag(
+            lowered, {"--collect-only", "--co"}
+        ):
+            return False
+        if executable == "jest" and _has_flag(lowered, {"--listtests", "--list-tests"}):
+            return False
+        if executable == "vitest" and (
+            lowered[:1] == ["list"] or _has_flag(lowered, {"--list"})
+        ):
+            return False
+        return True
+    if executable == "playwright":
+        return lowered[:1] == ["test"] and "--list" not in lowered
+    if re.fullmatch(r"python\d*(?:\.\d+)?", executable):
+        if lowered[:1] == ["-m"] and len(args) > 1:
+            return _simple_has_behavioral_evidence([args[1], *args[2:]], depth + 1)
+        return bool(args and _script_name_is_behavioral(args[0]))
+    if executable == "coverage":
+        if lowered[:1] != ["run"]:
+            return False
+        if "-m" in lowered or "--module" in lowered:
+            option = "-m" if "-m" in lowered else "--module"
+            index = lowered.index(option)
+            return index + 1 < len(args) and _simple_has_behavioral_evidence(
+                [args[index + 1], *args[index + 2 :]], depth + 1
+            )
+        return any(_script_name_is_behavioral(value) for value in args)
+
+    if depth < 2 and executable in {"npm", "pnpm", "yarn", "bun"}:
+        if lowered[:1] in (["exec"], ["x"]):
+            return _simple_has_behavioral_evidence(args[1:], depth + 1)
+        command_args = lowered[1:] if lowered[:1] == ["run"] else lowered
+        action = command_args[0] if command_args else ""
+        if _has_flag(
+            command_args[1:],
+            {"--collect-only", "--list", "--list-tests", "--listtests", "--no-run"},
+        ):
+            return False
+        return _named(action, {"test"})
+    if executable == "go":
+        return lowered[:1] == ["test"]
+    if executable == "cargo":
+        return (
+            lowered[:1] in (["test"], ["llvm-cov"])
+            and "--no-run" not in lowered
+            and "--list" not in lowered
+        )
+    if executable in {"mvn", "mvnw"}:
+        skipped = any(
+            value == "-dskiptests"
+            or value in {"-dskiptests=true", "-dmaven.test.skip=true"}
+            for value in lowered
+        )
+        return not skipped and any(
+            value in {"test", "verify", "package"} for value in lowered
+        )
+    if executable in {"gradle", "gradlew"}:
+        if _has_flag(lowered, {"-m", "--dry-run"}):
+            return False
+        requested, excluded = _gradle_tasks(args)
+        return any(
+            _gradle_task_is_behavioral(value)
+            and not _gradle_task_is_excluded(value, excluded)
+            for value in requested
+        )
+    if executable in {"bazel", "buck", "buck2"}:
+        return lowered[:1] == ["test"]
+    if executable == "deno":
+        return lowered[:1] == ["test"]
+    if executable in {"make", "ninja"}:
+        return any(_named(value, {"test"}) for value in lowered)
+    if executable == "ctest":
+        return (
+            "-n" not in lowered
+            and "--show-only" not in lowered
+            and not any(value.startswith("--show-only=") for value in lowered)
+        )
+    if executable == "tox":
+        return not _has_flag(lowered, {"-l", "--listenvs", "--list-envs", "--showconfig"})
+    if executable == "nox":
+        return not _has_flag(lowered, {"-l", "--list", "--list-sessions", "--list_sessions"})
+    if executable in {"rspec", "phpunit"}:
+        return True
+    if executable == "bundle":
+        return lowered[:2] == ["exec", "rspec"]
+    if executable == "mix":
+        return lowered[:1] == ["test"]
+    if executable == "swift":
+        return lowered[:1] == ["test"]
+    if executable == "xcodebuild":
+        return any(value in {"test", "test-without-building"} for value in lowered)
+    if executable == "composer":
+        return lowered[:1] == ["test"]
+    if executable == "dotnet":
+        return lowered[:1] == ["test"] and not _has_flag(
+            lowered, {"-t", "--list-tests"}
+        )
+    if executable == "node":
+        return "--test" in lowered
+    return _script_name_is_behavioral(values[0])
+
+
+def _command_has_behavioral_evidence(command: str, depth: int = 0) -> bool:
+    segments, unsafe = _tokens(command)
+    if unsafe:
+        return False
+    behavioral_after_latest_mutation = False
+    for segment in segments:
+        kind, nested_mutation = _classify_segment(segment, depth)
+        has_output_redirection = _has_output_redirection(segment)
+        if nested_mutation or kind == MUTATION or has_output_redirection:
+            behavioral_after_latest_mutation = False
+        # Nested shell commands perform their own ordered scan. For an output
+        # redirect, the file is opened before the command runs, so a behavioral
+        # check in the same segment still verifies the resulting workspace.
+        if kind == EVIDENCE and _simple_has_behavioral_evidence(segment, depth):
+            behavioral_after_latest_mutation = True
+    return behavioral_after_latest_mutation
+
+
 def _command_is_in_workspace(args: dict[str, Any], payload: dict[str, Any]) -> bool:
     if args.get("RunPersistent") is True:
         return False
@@ -898,13 +1187,29 @@ def _command_is_in_workspace(args: dict[str, Any], payload: dict[str, Any]) -> b
 
 def _event(name: str, args: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
     if name in WRITE_TOOLS and _is_workspace_write(args, payload):
-        return {"kind": MUTATION}
+        path = _workspace_relative_target(args, payload)
+        return {
+            "kind": MUTATION,
+            "modifiedPath": path,
+            "requiresBehavioral": _requires_behavioral_verification(path),
+        }
     if name == "run_command" and _command_is_in_workspace(args, payload):
-        kind, waiver, contains_mutation = _classify_command(_command(args))
+        command = _command(args)
+        kind, waiver, contains_mutation = _classify_command(command)
+        behavioral = kind == EVIDENCE and _command_has_behavioral_evidence(command)
+        # An ordered chain such as `formatter && static-check` still changes
+        # runtime-facing files without exercising behavior. Preserve it as a
+        # mutation so the static tail cannot hide the need for a real test.
+        if kind == EVIDENCE and contains_mutation and not behavioral:
+            kind = MUTATION
         if kind in {MUTATION, EVIDENCE, WAIVER}:
             event: dict[str, Any] = {"kind": kind}
             if contains_mutation:
                 event["containsMutation"] = True
+            if kind == MUTATION:
+                event["requiresBehavioral"] = True
+            if behavioral:
+                event["behavioral"] = True
             if waiver:
                 event["waiverReason"] = waiver
             return event
@@ -915,20 +1220,59 @@ def _apply_event(state: dict[str, Any], event: dict[str, Any], step: int) -> boo
     kind = event.get("kind")
     if kind == MUTATION:
         previous_write = state.get("lastWriteStep")
-        if isinstance(previous_write, int) and step <= previous_write:
-            return False
-        state["lastWriteStep"] = step
-        state["gateRetries"] = 0
+        changed = False
+        if not isinstance(previous_write, int) or step > previous_write:
+            previous_evidence = state.get("lastEvidenceStep")
+            if (
+                isinstance(previous_write, int)
+                and isinstance(previous_evidence, int)
+                and previous_evidence > previous_write
+                and step > previous_evidence
+            ):
+                state.pop("modifiedPaths", None)
+            state["lastWriteStep"] = step
+            state["gateRetries"] = 0
+            changed = True
+        if event.get("requiresBehavioral") is True:
+            previous_behavioral_write = state.get("lastBehavioralWriteStep")
+            if not isinstance(previous_behavioral_write, int) or step > previous_behavioral_write:
+                state["lastBehavioralWriteStep"] = step
+                changed = True
+        modified_path = event.get("modifiedPath")
+        if isinstance(modified_path, str) and modified_path:
+            paths = state.get("modifiedPaths")
+            if not isinstance(paths, list):
+                paths = []
+            bounded = [
+                value[:240]
+                for value in paths
+                if isinstance(value, str) and value
+            ][:MAX_MODIFIED_PATHS]
+            if modified_path not in bounded and len(bounded) < MAX_MODIFIED_PATHS:
+                bounded.append(modified_path[:240])
+                state["modifiedPaths"] = bounded
+                changed = True
         evidence_step = state.get("lastEvidenceStep")
         if not isinstance(evidence_step, int) or evidence_step <= step:
             state.pop("lastEvidenceStep", None)
             state.pop("evidence", None)
             state.pop("waiverReason", None)
-        return True
+        return changed
     if kind in {EVIDENCE, WAIVER}:
+        changed = False
+        if kind == EVIDENCE and event.get("behavioral") is True:
+            previous_behavioral = state.get("lastBehavioralEvidenceStep")
+            if not isinstance(previous_behavioral, int) or step > previous_behavioral:
+                state["lastBehavioralEvidenceStep"] = step
+                changed = True
+        if kind == WAIVER:
+            previous_waiver = state.get("lastWaiverStep")
+            if not isinstance(previous_waiver, int) or step > previous_waiver:
+                state["lastWaiverStep"] = step
+                changed = True
         previous_evidence = state.get("lastEvidenceStep")
         if isinstance(previous_evidence, int) and step <= previous_evidence:
-            return False
+            return changed
         state["lastEvidenceStep"] = step
         state["evidence"] = "no-runnable-check" if kind == WAIVER else "command"
         if kind == WAIVER:
@@ -958,7 +1302,7 @@ def _handle_post(payload: dict[str, Any]) -> None:
         if event.get("kind") == MUTATION or event.get("containsMutation") is True:
             # Earlier segments in an `&&` chain may have changed files before a
             # later check failed, even when the chain's final kind is evidence.
-            event = {"kind": MUTATION}
+            event = {"kind": MUTATION, "requiresBehavioral": True}
         else:
             # A failed check or waiver is never evidence.
             _emit({})
@@ -997,8 +1341,18 @@ def _handle_stop(payload: dict[str, Any]) -> None:
         state = _load_state(path)
         write_step = state.get("lastWriteStep")
         evidence_step = state.get("lastEvidenceStep")
-        if not isinstance(write_step, int) or (
+        behavioral_write_step = state.get("lastBehavioralWriteStep")
+        behavioral_evidence_step = state.get("lastBehavioralEvidenceStep")
+        waiver_step = state.get("lastWaiverStep")
+        has_current_evidence = (
             isinstance(evidence_step, int) and evidence_step > write_step
+        ) if isinstance(write_step, int) else False
+        has_behavioral_evidence = not isinstance(behavioral_write_step, int) or any(
+            isinstance(candidate, int) and candidate > behavioral_write_step
+            for candidate in (behavioral_evidence_step, waiver_step)
+        )
+        if not isinstance(write_step, int) or (
+            has_current_evidence and has_behavioral_evidence
         ):
             _emit({"decision": "allow"})
             return
@@ -1017,16 +1371,26 @@ def _handle_stop(payload: dict[str, Any]) -> None:
 
         state["gateRetries"] = retries + 1
         _save_state(path, state)
+    if isinstance(behavioral_write_step, int) and not has_behavioral_evidence:
+        reason = (
+            "Workspace files changed in logic or unknown scope without later behavioral verification. "
+            "Run the smallest relevant unit, integration, or regression test; a format, lint, "
+            "type-check, or build-only command is not sufficient for this scope. "
+            f"If no behavioral check can run, print `{NO_CHECK_MARKER} <specific reason>` "
+            "and report the limitation in the final response. This gate retries once to avoid a loop."
+        )
+    else:
+        reason = (
+            "Workspace files changed after the latest successful verification. "
+            "Run the smallest relevant test, lint, type-check, or build command before finishing. "
+            f"If no runnable check exists, run a command that prints `{NO_CHECK_MARKER} "
+            "<specific reason>` and report that limitation in the final response. "
+            "This gate retries once to avoid a loop."
+        )
     _emit(
         {
             "decision": "continue",
-            "reason": (
-                "Workspace files changed after the latest successful verification. "
-                "Run the smallest relevant test, lint, type-check, or build command before finishing. "
-                f"If no runnable check exists, run a command that prints `{NO_CHECK_MARKER} "
-                "<specific reason>` and report that limitation in the final response. "
-                "This gate retries once to avoid a loop."
-            ),
+            "reason": reason,
         }
     )
 
