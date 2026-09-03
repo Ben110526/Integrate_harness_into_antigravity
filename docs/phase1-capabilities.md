@@ -93,6 +93,19 @@ print command and disclose the waiver in its final response. A waiver is not a
 pass. To avoid trapping a session, the hook issues at most one reminder before it
 fails open; it never executes a project command itself.
 
+Routing policy adds a conservative inline fast path for tiny `IMPLEMENT` work:
+one deterministic acceptance outcome and one contiguous hunk of at most 10
+changed lines in one existing file, with no multi-constraint task, dirty overlap,
+external operation, generated/vendor/lock file, or
+public-contract, configuration, CI/build/install, dependency, security/auth,
+persistence/migration, concurrency, permission, secret, legal, or operator-workflow
+impact. The main agent edits directly, reviews the exact diff, and runs one narrow
+check without implementer or verifier subagents. Static prose/comments/docs use a
+static check; executable source still requires an existing focused behavioral
+check. Uncertainty, scope growth, or unavailable/failed/inconclusive evidence
+promotes the task before another write. Medium and large tasks retain the existing
+subagent, review, and verification workflow; size alone never lowers risk.
+
 The Stop hook also makes a bounded, best-effort read of the current
 `transcriptPath` for citation grounding. It currently understands completed
 `MODEL` / `PLANNER_RESPONSE` / `DONE` records after the latest user request; this
