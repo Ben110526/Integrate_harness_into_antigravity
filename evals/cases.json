@@ -24,6 +24,51 @@
     "verify": []
   },
   {
+    "id": "local-lookup-existing-symbol",
+    "language": "python",
+    "route": "LOCAL_LOOKUP",
+    "fixture": "python-calculator",
+    "prompt": "Determine whether the exact symbol divide is defined in this repository and, if it is, locate its definition. This is a bounded local read-only lookup: use no more than two exact local file/search reads; do not modify files, run terminal commands, use MCP/network tools, infer absence, or perform a broader review. Return exactly four plain-text lines with no extra prose or Markdown, using this schema and filling every value from observed evidence: SYMBOL_STATUS: divide <FOUND or NOT_FOUND>; SYMBOL_LOCATION: <repository-relative path and one-based line, or none>; FILES_CHANGED: <none or changed paths>; Harness: <selected route>; passed: <evidence>; failed/skipped: <items or none>.",
+    "expect_change": false,
+    "allowed_changed_paths": [],
+    "response_contains": [
+      "SYMBOL_STATUS: divide FOUND",
+      "SYMBOL_LOCATION: calculator.py:1",
+      "FILES_CHANGED: none",
+      "Harness: LOCAL_LOOKUP; passed: exact local symbol lookup; failed/skipped: none"
+    ],
+    "response_not_contains": [
+      "SYMBOL_STATUS: divide NOT_FOUND",
+      "FILES_CHANGED: modified"
+    ],
+    "response_only_lines": [
+      "SYMBOL_STATUS: divide FOUND",
+      "SYMBOL_LOCATION: calculator.py:1",
+      "FILES_CHANGED: none",
+      "Harness: LOCAL_LOOKUP; passed: exact local symbol lookup; failed/skipped: none"
+    ],
+    "requires": [],
+    "verify": [],
+    "benchmark": true
+  },
+  {
+    "id": "review-only-conceptual",
+    "language": "python",
+    "route": "REVIEW_ONLY",
+    "fixture": "python-calculator",
+    "prompt": "Review only this stated API design choice at a conceptual level: converting division-by-zero from the language-native ZeroDivisionError to the public contract ValueError. Explain the compatibility trade-off without inspecting the repository, running commands, modifying files, or claiming runtime evidence. Mention both exception types and finish with the policy-required Harness status line using the route selected by policy; describe the conceptual review as passed and runtime verification as not required.",
+    "expect_change": false,
+    "allowed_changed_paths": [],
+    "response_contains": [
+      "ValueError",
+      "ZeroDivisionError",
+      "Harness: REVIEW_ONLY; passed: conceptual API review; failed/skipped: runtime verification not required"
+    ],
+    "requires": [],
+    "verify": [],
+    "benchmark": true
+  },
+  {
     "id": "nonexistent-symbol-read-only",
     "language": "python",
     "route": "REVIEW_VERIFY",

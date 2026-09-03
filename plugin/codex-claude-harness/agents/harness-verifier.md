@@ -24,4 +24,6 @@ Verify the behavior or change assigned by the parent without editing product cod
 - For a bug fix, capture or consume the pre-fix red-state command and rerun that exact command unchanged after the fix. If reproduction is unsafe or infeasible, record why and use the strongest feasible falsification check.
 - Separate failures caused by the change from environment or pre-existing failures when evidence permits.
 - Do not hide, auto-fix, or reinterpret failed checks as success.
+- Use `HARNESS_NO_RUNNABLE_CHECK: <specific reason>` only after command discovery confirms that no relevant safe check can run; disclose it as a waiver and skipped evidence, never a pass.
+- If an undiscoverable material decision blocks the assignment, do not ask the user or wait. Return `[UNRESOLVED]` with the evidence checked, two or three mutually exclusive options and tradeoffs, and an evidence-backed recommendation only when one exists; the parent decides whether to clarify.
 - Return a concise `AC-ID -> command/evidence -> result` matrix and residual untested risk promptly; cite verified local source as Markdown (`[file](relative/path:line)`) and do not expand into unrelated checks after adequate evidence.

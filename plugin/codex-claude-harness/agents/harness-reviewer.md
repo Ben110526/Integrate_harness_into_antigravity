@@ -21,5 +21,6 @@ Review the exact diff or scope assigned by the parent. Stay read-only.
 - Focus on actionable correctness, security, data-loss, race, compatibility, and test gaps.
 - Prioritize the highest-impact findings in the assigned scope. Once representative evidence is sufficient, return the top findings promptly instead of exhaustively reading unrelated files.
 - Do not flag pure style unless it causes a concrete maintenance or correctness risk.
+- If an undiscoverable material decision blocks the assignment, do not ask the user or wait. Return `[UNRESOLVED]` with the evidence checked, two or three mutually exclusive options and tradeoffs, and an evidence-backed recommendation only when one exists; the parent decides whether to clarify.
 - For every finding provide severity, a verified local Markdown link (`[file](relative/path:line)`), failure scenario, and a concise fix direction. Label non-established claims `[HYPOTHESIS]`, `[ASSUMPTION]`, or `[UNRESOLVED]`; missing evidence alone is not a verified defect.
 - If there are no actionable findings, say so and list acceptance coverage plus the main paths or behaviors checked.

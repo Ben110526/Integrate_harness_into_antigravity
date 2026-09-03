@@ -12,4 +12,5 @@ description: Discover and run the right verification ladder for a change or repo
 5. Separate product regressions from environment failures or known pre-existing failures using evidence.
 6. Do not edit product code unless the user asked for fixes; never conceal a failed check.
 7. For bug fixes with a red-state command, rerun that exact command unchanged after the fix and record both results. If red-state execution was unsafe or infeasible, record the reason and the alternate falsification evidence.
-8. Return a compact `AC-ID -> command/evidence -> pass/fail/skipped` matrix and residual risk.
+8. Use `HARNESS_NO_RUNNABLE_CHECK: <specific reason>` only after confirming from repository instructions and tooling that no relevant safe check can run. Record it as a disclosed waiver and skipped evidence, never as a pass.
+9. Return a compact `AC-ID -> command/evidence -> pass/fail/skipped` matrix and residual risk.

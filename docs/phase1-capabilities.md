@@ -24,6 +24,13 @@ request. Their output remains advisory unless the user requested implementation.
 
 ## Skills and slash commands
 
+- `/harness-clarify` resolves only an undiscoverable material product or
+  engineering decision after bounded repository evidence and a cheap safe check
+  are exhausted. The main agent owns the native `ask_question` prompt; background
+  subagents return `[UNRESOLVED]` with evidence, options and tradeoffs instead of
+  waiting for user input. Headless, unavailable and cancelled prompts fall back to
+  one normal-text question without a retry loop. This skill never substitutes for
+  permission, OAuth, credential or destructive-action approval flows.
 - `/harness-migration` inventories compatibility and breaking changes, then
   proposes independently reviewable migration slices. It does not create or push
   pull requests by itself.
@@ -35,6 +42,14 @@ request. Their output remains advisory unless the user requested implementation.
   results from estimates.
 
 ## Lifecycle protections
+
+Quota-aware routing keeps exact positive local lookups on a strict two-call
+`grep_search`/`view_file` fast path and uses reviewer-only execution for theoretical
+or static assessments without an executable behavioral claim. Ambiguous or absent
+lookup results, cross-file reasoning, concrete defect claims, runtime behavior,
+security behavior and changed-code review retain the fuller research or
+review-plus-verification routes. These are bounded routing optimizations, not a
+reduction in evidence requirements.
 
 The PreToolUse DLP gate inspects file-write and terminal payloads for high-confidence
 private keys and credentials before execution. High-confidence exposure and an
