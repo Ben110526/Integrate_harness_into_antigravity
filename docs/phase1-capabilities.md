@@ -78,6 +78,24 @@ print command and disclose the waiver in its final response. A waiver is not a
 pass. To avoid trapping a session, the hook issues at most one reminder before it
 fails open; it never executes a project command itself.
 
+The Stop hook also makes a bounded, best-effort read of the current
+`transcriptPath` for citation grounding. It currently understands completed
+`MODEL` / `PLANNER_RESPONSE` / `DONE` records after the latest user request; this
+compatibility does not promise a universal transcript schema. Unknown, truncated,
+unsafe or undocumented shapes fail open. For a recognized response, the hook
+validates only explicit non-image local Markdown links and raw `file://` targets.
+Each target must be one regular file inside a current workspace root, and any
+optional line or line-range reference must fit that file. Traversal, symlink
+escape and outside-workspace targets are rejected without opening, reading or
+disclosing external file content. An invalid citation receives one generic
+correction reminder, then fails open to avoid a Stop loop.
+
+Citation grounding establishes only that the local path and optional line range
+exist. It cannot prove that the model's semantic claim follows from those lines,
+and it cannot detect a hallucination that contains no explicit local citation.
+Independent review, tests and the hallucination-trap eval remain complementary
+controls.
+
 For complex or multi-constraint changes, workflow skills maintain an acceptance
 ledger with stable `AC-*` IDs and carry each ID through implementation, review,
 verification, and handoff. Bug fixes prefer a focused red-state reproduction before

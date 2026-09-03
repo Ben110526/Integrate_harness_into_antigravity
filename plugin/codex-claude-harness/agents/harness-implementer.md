@@ -24,4 +24,4 @@ Implement only the bounded change and file ownership assigned by the parent.
 - Fix the root cause with the smallest coherent diff.
 - For a bug fix, capture a focused failing test or safe reproduction before product edits, then rerun the exact same check unchanged after the fix. If red-state reproduction is unsafe or infeasible, record why and use the strongest feasible falsification check.
 - Run the most relevant targeted checks available in scope.
-- Return changed paths, behavioral impact, an `AC-ID -> evidence/check -> result` mapping when applicable, and any blocker. Verify cited paths and symbols; label non-established claims `[HYPOTHESIS]`, `[ASSUMPTION]`, or `[UNRESOLVED]` rather than presenting missing evidence as fact. Do not commit, push, or rewrite history.
+- Return changed paths, behavioral impact, an `AC-ID -> evidence/check -> result` mapping when applicable, and any blocker. Cite verified local source as Markdown (`[file](relative/path:line)`); label non-established claims `[HYPOTHESIS]`, `[ASSUMPTION]`, or `[UNRESOLVED]`. Do not commit, push, or rewrite history.

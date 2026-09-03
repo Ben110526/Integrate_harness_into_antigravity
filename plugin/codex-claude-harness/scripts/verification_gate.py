@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Bounded Stop hook that requires scope-appropriate post-write evidence.
+"""Bounded Stop hook for post-write evidence and local citation grounding.
 
 The hook records step numbers, short evidence labels, and bounded workspace-
 relative changed paths in the conversation artifact directory. It never
-executes project checks itself.
+executes project checks itself. On compatible transcripts it also verifies
+that explicit local file citations resolve inside the current workspace.
 """
 
 from __future__ import annotations
@@ -37,6 +38,13 @@ WRITE_TOOLS = {
 }
 MAX_GATE_RETRIES = 1
 MAX_MODIFIED_PATHS = 32
+MAX_TRANSCRIPT_TAIL_BYTES = 512 * 1024
+MAX_TRANSCRIPT_LINES = 512
+MAX_TRANSCRIPT_RECORD_BYTES = 256 * 1024
+MAX_RESPONSE_BYTES = 128 * 1024
+MAX_CITATIONS = 32
+MAX_CITATION_LENGTH = 512
+MAX_CITATION_SOURCE_BYTES = 8 * 1024 * 1024
 NO_CHECK_MARKER = "HARNESS_NO_RUNNABLE_CHECK:"
 EVIDENCE = "evidence"
 MUTATION = "mutation"
@@ -63,6 +71,17 @@ _AMBIGUOUS_DOCUMENT_SUFFIXES = {".mdx", ".txt"}
 _STATIC_DOCUMENT_NAMES = {
     ".editorconfig", ".gitattributes", ".gitignore", "authors", "changelog",
     "code_of_conduct", "contributing", "license", "notice", "readme",
+}
+_MARKDOWN_LINK = re.compile(
+    r"(?<!!)\[[^\]\n]{1,256}\]\(\s*"
+    r"(?:<([^>\n]{1,512})>|([^\s)\n]{1,512}))"
+    r"(?:\s+(?:\"[^\"\n]{0,256}\"|'[^'\n]{0,256}'|\([^()\n]{0,256}\)))?\s*\)"
+)
+_RAW_FILE_URI = re.compile(r"file://[^\s<>)\]`]+", re.IGNORECASE)
+_BAD_PERCENT_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
+_NON_FILE_URI_SCHEMES = {
+    "codex", "data", "ftp", "ftps", "http", "https", "mailto", "sms",
+    "ssh", "tel", "urn", "vscode",
 }
 
 
@@ -133,7 +152,7 @@ def _private_state_directory(temp_root: Optional[Path] = None) -> Optional[Path]
             finally:
                 os.close(descriptor)
         return directory
-    except OSError:
+    except (OSError, ValueError):
         return None
 
 
@@ -368,6 +387,350 @@ def _is_within(candidate: Path, root: Path) -> bool:
         return True
     except (OSError, ValueError):
         return False
+
+
+def _lexically_within(candidate: Path, root: Path) -> bool:
+    try:
+        Path(os.path.abspath(str(candidate))).relative_to(
+            Path(os.path.abspath(str(root)))
+        )
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _safe_transcript_path(payload: dict[str, Any]) -> Optional[Path]:
+    transcript_value = payload.get("transcriptPath")
+    artifact_value = payload.get("artifactDirectoryPath")
+    if not isinstance(transcript_value, str) or not transcript_value.strip():
+        return None
+    if not isinstance(artifact_value, str) or not artifact_value.strip():
+        return None
+    transcript = Path(transcript_value).expanduser()
+    artifact = Path(artifact_value).expanduser()
+    if not transcript.is_absolute() or not artifact.is_absolute():
+        return None
+    if transcript.name != "transcript.jsonl":
+        return None
+    if not _lexically_within(transcript, artifact):
+        return None
+    try:
+        resolved_artifact = artifact.resolve(strict=True)
+        resolved_transcript = transcript.resolve(strict=True)
+    except OSError:
+        return None
+    if not _is_within(resolved_transcript, resolved_artifact):
+        return None
+    return transcript
+
+
+def _read_transcript_tail(payload: dict[str, Any]) -> Optional[list[str]]:
+    path = _safe_transcript_path(payload)
+    if path is None:
+        return None
+    try:
+        with _open_regular_file(path, os.O_RDONLY) as handle:
+            size = os.fstat(handle.fileno()).st_size
+            start = max(0, size - MAX_TRANSCRIPT_TAIL_BYTES)
+            handle.seek(start)
+            data = handle.read(size - start)
+    except OSError:
+        return None
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    lines = [
+        line[:-1] if line.endswith("\r") else line
+        for line in text.split("\n")
+    ]
+    if start > 0 and lines:
+        lines = lines[1:]
+    return lines[-MAX_TRANSCRIPT_LINES:]
+
+
+def _content_was_truncated(record: dict[str, Any]) -> bool:
+    truncated = record.get("truncated_fields")
+    if isinstance(truncated, str):
+        return truncated.casefold() == "content"
+    if isinstance(truncated, list):
+        return any(
+            isinstance(value, str) and value.casefold() == "content"
+            for value in truncated
+        )
+    return False
+
+
+def _latest_model_response(
+    payload: dict[str, Any]
+) -> Optional[tuple[str, int, int]]:
+    lines = _read_transcript_tail(payload)
+    if lines is None:
+        return None
+    records: list[dict[str, Any]] = []
+    for line in lines:
+        if not line.strip():
+            continue
+        if len(line.encode("utf-8")) > MAX_TRANSCRIPT_RECORD_BYTES:
+            return None
+        try:
+            record = json.loads(line)
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(record, dict):
+            return None
+        records.append(record)
+
+    user_steps = [
+        record.get("step_index")
+        for record in records
+        if str(record.get("source", "")).upper() in {"USER", "USER_EXPLICIT"}
+        and str(record.get("type", "")).upper() in {"REQUEST", "USER_INPUT"}
+        and isinstance(record.get("step_index"), int)
+        and not isinstance(record.get("step_index"), bool)
+    ]
+    if not user_steps:
+        return None
+    user_step = max(user_steps)
+
+    for record in reversed(records):
+        if str(record.get("source", "")).upper() != "MODEL":
+            continue
+        step = record.get("step_index")
+        if not isinstance(step, int) or isinstance(step, bool) or step <= user_step:
+            return None
+        if str(record.get("type", "")).upper() != "PLANNER_RESPONSE":
+            return None
+        if str(record.get("status", "")).upper() != "DONE":
+            return None
+        if _content_was_truncated(record) or record.get("tool_calls"):
+            return None
+        content = record.get("content")
+        if not isinstance(content, str):
+            return None
+        if len(content.encode("utf-8")) > MAX_RESPONSE_BYTES:
+            return None
+        return content, user_step, step
+    return None
+
+
+def _without_markdown_code_or_images(text: str) -> str:
+    visible: list[str] = []
+    fence: Optional[str] = None
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        marker = stripped[:3]
+        if marker in {"```", "~~~"}:
+            if fence is None:
+                fence = marker
+            elif fence == marker:
+                fence = None
+            continue
+        if fence is None:
+            visible.append(line)
+    result = "\n".join(visible)
+    result = re.sub(r"`+[^`\n]*`+", "", result)
+    return re.sub(r"!\[[^\]\n]*\]\([^\n)]*\)", "", result)
+
+
+def _explicit_citation_targets(text: str) -> Optional[list[str]]:
+    visible = _without_markdown_code_or_images(text)
+    targets: list[str] = []
+    for match in _MARKDOWN_LINK.finditer(visible):
+        targets.append(match.group(1) or match.group(2))
+    targets.extend(
+        match.group(0).rstrip(".,;") for match in _RAW_FILE_URI.finditer(visible)
+    )
+    unique = list(dict.fromkeys(targets))
+    return unique if len(unique) <= MAX_CITATIONS else None
+
+
+def _citation_line_range(
+    path_value: str, fragment: str
+) -> tuple[str, Optional[int], Optional[int]]:
+    if fragment:
+        match = re.fullmatch(r"L(\d+)(?:-L?(\d+))?", fragment, re.IGNORECASE)
+        if match:
+            start = int(match.group(1))
+            end = int(match.group(2) or match.group(1))
+            return path_value, start, end
+        return path_value, None, None
+
+    match = re.fullmatch(r"^(.*):(\d+)-(\d+)$", path_value)
+    if match:
+        return match.group(1), int(match.group(2)), int(match.group(3))
+    match = re.fullmatch(r"^(.*):(\d+):(\d+)$", path_value)
+    if match:
+        if int(match.group(3)) < 1:
+            raise ValueError("invalid citation")
+        line = int(match.group(2))
+        return match.group(1), line, line
+    match = re.fullmatch(r"^(.*):(\d+)$", path_value)
+    if match:
+        line = int(match.group(2))
+        return match.group(1), line, line
+    return path_value, None, None
+
+
+def _parse_local_citation(
+    raw_target: str,
+) -> Optional[tuple[str, Optional[int], Optional[int]]]:
+    target = raw_target.strip()
+    if len(target) > MAX_CITATION_LENGTH or not target:
+        raise ValueError("invalid citation")
+    if any(ord(character) < 32 for character in target):
+        raise ValueError("invalid citation")
+    if _BAD_PERCENT_ESCAPE.search(target):
+        raise ValueError("invalid citation")
+
+    lowered = target.casefold()
+    if target.startswith("#"):
+        return None
+    scheme = urlparse(target).scheme.casefold()
+    if scheme in _NON_FILE_URI_SCHEMES:
+        return None
+    fragment = ""
+    if lowered.startswith("file://"):
+        parsed = urlparse(target)
+        if parsed.scheme.casefold() != "file" or parsed.netloc or parsed.query:
+            raise ValueError("invalid citation")
+        path_value = unquote(parsed.path)
+        fragment = unquote(parsed.fragment)
+        if os.name == "nt" and re.match(r"^/[A-Za-z]:/", path_value):
+            path_value = path_value[1:]
+    else:
+        if "://" in target:
+            return None
+        if "?" in target:
+            raise ValueError("invalid citation")
+        path_value, separator, fragment = target.partition("#")
+        if separator and "#" in fragment:
+            raise ValueError("invalid citation")
+        path_value = unquote(path_value)
+        fragment = unquote(fragment)
+    if any(ord(character) < 32 for character in path_value + fragment):
+        raise ValueError("invalid citation")
+    if not path_value:
+        raise ValueError("invalid citation")
+    return _citation_line_range(path_value, fragment)
+
+
+def _open_workspace_source(path: Path) -> Optional[Any]:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(str(path), flags)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            os.close(descriptor)
+            return None
+        return os.fdopen(descriptor, "rb", buffering=0)
+    except (OSError, ValueError):
+        return None
+
+
+def _citation_file_result(
+    path_value: str,
+    start_line: Optional[int],
+    end_line: Optional[int],
+    payload: dict[str, Any],
+) -> Optional[bool]:
+    if start_line is not None and (
+        start_line < 1 or end_line is None or end_line < start_line
+    ):
+        return False
+    root_values = payload.get("workspacePaths")
+    if not isinstance(root_values, list) or not root_values:
+        return None
+    roots: list[tuple[Path, Path]] = []
+    for root_value in root_values:
+        if not isinstance(root_value, str) or not root_value.strip():
+            return None
+        declared_root = _as_local_path(root_value)
+        if not declared_root.is_absolute():
+            return None
+        try:
+            resolved_root = declared_root.resolve(strict=True)
+        except (OSError, ValueError):
+            return None
+        if not resolved_root.is_dir() or resolved_root == Path(resolved_root.anchor):
+            return None
+        roots.append((declared_root, resolved_root))
+
+    citation_path = _as_local_path(path_value)
+    lexical_candidates: list[tuple[Path, Path]] = []
+    if citation_path.is_absolute():
+        for declared_root, resolved_root in roots:
+            if _lexically_within(citation_path, declared_root) or _lexically_within(
+                citation_path, resolved_root
+            ):
+                lexical_candidates.append((citation_path, resolved_root))
+    else:
+        for declared_root, resolved_root in roots:
+            candidate = declared_root / citation_path
+            if _lexically_within(candidate, declared_root):
+                lexical_candidates.append((candidate, resolved_root))
+    if not lexical_candidates:
+        return False
+
+    resolved_matches: dict[str, Path] = {}
+    for candidate, resolved_root in lexical_candidates:
+        try:
+            resolved = candidate.resolve(strict=True)
+        except (OSError, ValueError):
+            continue
+        if not _is_within(resolved, resolved_root):
+            continue
+        handle = _open_workspace_source(resolved)
+        if handle is None:
+            continue
+        handle.close()
+        resolved_matches[str(resolved)] = resolved
+    if len(resolved_matches) != 1:
+        return False
+    resolved = next(iter(resolved_matches.values()))
+    if start_line is None:
+        return True
+
+    handle = _open_workspace_source(resolved)
+    if handle is None:
+        return False
+    with handle:
+        size = os.fstat(handle.fileno()).st_size
+        if size > MAX_CITATION_SOURCE_BYTES:
+            return None
+        data = handle.read(MAX_CITATION_SOURCE_BYTES + 1)
+    if len(data) > MAX_CITATION_SOURCE_BYTES:
+        return None
+    line_count = data.count(b"\n")
+    if data and not data.endswith(b"\n"):
+        line_count += 1
+    return end_line is not None and end_line <= line_count
+
+
+def _citation_status(payload: dict[str, Any]) -> tuple[str, Optional[int]]:
+    latest = _latest_model_response(payload)
+    if latest is None:
+        return "unavailable", None
+    content, user_step, _ = latest
+    targets = _explicit_citation_targets(content)
+    if targets is None:
+        return "invalid", user_step
+    unsupported = False
+    for raw_target in targets:
+        try:
+            parsed = _parse_local_citation(raw_target)
+        except ValueError:
+            return "invalid", user_step
+        if parsed is None:
+            continue
+        result = _citation_file_result(*parsed, payload)
+        if result is False:
+            return "invalid", user_step
+        if result is None:
+            unsupported = True
+    return ("unavailable" if unsupported else "valid"), user_step
 
 
 def _is_workspace_write(args: dict[str, Any], payload: dict[str, Any]) -> bool:
@@ -1334,11 +1697,44 @@ def _handle_stop(payload: dict[str, Any]) -> None:
         _emit({"decision": "allow"})
         return
 
+    citation_status, citation_turn_step = _citation_status(payload)
     path = _state_path(payload)
     with _state_lock(path) as acquired:
         if not acquired:
             raise OSError(f"could not lock verification state: {path}")
         state = _load_state(path)
+        state_changed = False
+        continue_reasons: list[str] = []
+        warnings: list[str] = []
+
+        if isinstance(citation_turn_step, int):
+            previous_turn = state.get("citationTurnStep")
+            if not isinstance(previous_turn, int) or citation_turn_step != previous_turn:
+                state["citationTurnStep"] = citation_turn_step
+                state["citationGateRetries"] = 0
+                state_changed = True
+        if citation_status == "valid":
+            if state.pop("citationGateRetries", None) is not None:
+                state_changed = True
+        elif citation_status == "invalid":
+            retries = state.get("citationGateRetries", 0)
+            if not isinstance(retries, int):
+                retries = 0
+            if retries < MAX_GATE_RETRIES:
+                state["citationGateRetries"] = retries + 1
+                state_changed = True
+                continue_reasons.append(
+                    "One or more explicit local file citations are not grounded in a "
+                    "current regular workspace file and valid line range. Re-check every local "
+                    "citation and correct or remove unsupported references. No outside-workspace "
+                    "file content was opened or read. The citation gate retries once to avoid a loop."
+                )
+            else:
+                warnings.append(
+                    "Citation grounding is still invalid; allowing stop after one reminder to "
+                    "avoid a loop."
+                )
+
         write_step = state.get("lastWriteStep")
         evidence_step = state.get("lastEvidenceStep")
         behavioral_write_step = state.get("lastBehavioralWriteStep")
@@ -1351,48 +1747,51 @@ def _handle_stop(payload: dict[str, Any]) -> None:
             isinstance(candidate, int) and candidate > behavioral_write_step
             for candidate in (behavioral_evidence_step, waiver_step)
         )
-        if not isinstance(write_step, int) or (
+        verification_missing = isinstance(write_step, int) and not (
             has_current_evidence and has_behavioral_evidence
-        ):
-            _emit({"decision": "allow"})
-            return
-
-        retries = state.get("gateRetries", 0)
-        if not isinstance(retries, int):
-            retries = 0
-        if retries >= MAX_GATE_RETRIES:
-            _emit(
-                {
-                    "decision": "allow",
-                    "reason": "Verification is still missing; allowing stop after one reminder to avoid a loop.",
-                }
-            )
-            return
-
-        state["gateRetries"] = retries + 1
-        _save_state(path, state)
-    if isinstance(behavioral_write_step, int) and not has_behavioral_evidence:
-        reason = (
-            "Workspace files changed in logic or unknown scope without later behavioral verification. "
-            "Run the smallest relevant unit, integration, or regression test; a format, lint, "
-            "type-check, or build-only command is not sufficient for this scope. "
-            f"If no behavioral check can run, print `{NO_CHECK_MARKER} <specific reason>` "
-            "and report the limitation in the final response. This gate retries once to avoid a loop."
         )
+        if verification_missing:
+            retries = state.get("gateRetries", 0)
+            if not isinstance(retries, int):
+                retries = 0
+            if retries < MAX_GATE_RETRIES:
+                state["gateRetries"] = retries + 1
+                state_changed = True
+                if isinstance(behavioral_write_step, int) and not has_behavioral_evidence:
+                    continue_reasons.append(
+                        "Workspace files changed in logic or unknown scope without later behavioral "
+                        "verification. Run the smallest relevant unit, integration, or regression "
+                        "test; a format, lint, type-check, or build-only command is not sufficient "
+                        f"for this scope. If no behavioral check can run, print `{NO_CHECK_MARKER} "
+                        "<specific reason>` and report the limitation in the final response. This "
+                        "gate retries once to avoid a loop."
+                    )
+                else:
+                    continue_reasons.append(
+                        "Workspace files changed after the latest successful verification. Run the "
+                        "smallest relevant test, lint, type-check, or build command before finishing. "
+                        f"If no runnable check exists, run a command that prints `{NO_CHECK_MARKER} "
+                        "<specific reason>` and report that limitation in the final response. This "
+                        "gate retries once to avoid a loop."
+                    )
+            else:
+                warnings.append(
+                    "Verification is still missing; allowing stop after one reminder to avoid a loop."
+                )
+        if state_changed:
+            _save_state(path, state)
+
+    if continue_reasons:
+        _emit(
+            {
+                "decision": "continue",
+                "reason": " ".join([*continue_reasons, *warnings]),
+            }
+        )
+    elif warnings:
+        _emit({"decision": "allow", "reason": " ".join(warnings)})
     else:
-        reason = (
-            "Workspace files changed after the latest successful verification. "
-            "Run the smallest relevant test, lint, type-check, or build command before finishing. "
-            f"If no runnable check exists, run a command that prints `{NO_CHECK_MARKER} "
-            "<specific reason>` and report that limitation in the final response. "
-            "This gate retries once to avoid a loop."
-        )
-    _emit(
-        {
-            "decision": "continue",
-            "reason": reason,
-        }
-    )
+        _emit({"decision": "allow"})
 
 
 def _fail_open(mode: str, payload: Optional[dict[str, Any]] = None) -> None:
