@@ -106,6 +106,11 @@ def require_response_contract(result: dict[str, Any], case: dict[str, Any]) -> N
         nonblank = [line.strip() for line in response.splitlines() if line.strip()]
         if nonblank != only_lines:
             raise BenchmarkError("response did not match the exact-line contract")
+    expected_line_count = case.get("response_line_count")
+    if expected_line_count is not None:
+        nonblank_count = len([line for line in response.splitlines() if line.strip()])
+        if nonblank_count != expected_line_count:
+            raise BenchmarkError("response did not match the line-count contract")
 
 
 def emit(payload: dict[str, Any]) -> None:

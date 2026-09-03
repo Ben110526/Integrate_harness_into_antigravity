@@ -85,6 +85,7 @@ PY
   expect_response_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("response_contains", [])))' "${cases_path}" "${case_index}")"
   reject_response_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("response_not_contains", [])))' "${cases_path}" "${case_index}")"
   only_response_lines_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("response_only_lines", [])))' "${cases_path}" "${case_index}")"
+  response_line_count_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("response_line_count")))' "${cases_path}" "${case_index}")"
   required_changed_paths_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("required_changed_paths", [])))' "${cases_path}" "${case_index}")"
   allowed_changed_paths_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])]["allowed_changed_paths"]))' "${cases_path}" "${case_index}")"
   requires_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("requires", [])))' "${cases_path}" "${case_index}")"
@@ -160,7 +161,7 @@ PY
     continue
   fi
 
-  if ! python3 - "${response_path}" "${expect_response_json}" "${reject_response_json}" "${only_response_lines_json}" "${route}" <<'PY'
+  if ! python3 - "${response_path}" "${expect_response_json}" "${reject_response_json}" "${only_response_lines_json}" "${route}" "${response_line_count_json}" <<'PY'
 import json
 import sys
 
@@ -194,6 +195,14 @@ if only_lines:
     nonblank = [line.strip() for line in text.splitlines() if line.strip()]
     if nonblank != only_lines:
         raise SystemExit(f"unexpected response lines: expected exactly {only_lines}")
+expected_line_count = json.loads(sys.argv[6])
+if expected_line_count is not None:
+    nonblank_count = len([line for line in text.splitlines() if line.strip()])
+    if nonblank_count != expected_line_count:
+        raise SystemExit(
+            f"unexpected response line count: expected {expected_line_count}, "
+            f"got {nonblank_count}"
+        )
 PY
   then
     printf '[fail] %s: invalid response envelope\n' "${case_id}" >&2

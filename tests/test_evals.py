@@ -58,6 +58,10 @@ class EvalManifestTests(unittest.TestCase):
                     for command in case.get("requires", [])
                 ))
                 self.assertIsInstance(case.get("benchmark", False), bool)
+                response_line_count = case.get("response_line_count")
+                if response_line_count is not None:
+                    self.assertIsInstance(response_line_count, int)
+                    self.assertGreater(response_line_count, 0)
                 if case.get("benchmark"):
                     self.assertFalse(case["expect_change"])
                     self.assertEqual(case["allowed_changed_paths"], [])
@@ -187,15 +191,8 @@ class EvalManifestTests(unittest.TestCase):
         self.assertTrue(local_lookup["benchmark"])
         self.assertNotIn("calculator.py:1", local_lookup["prompt"])
         self.assertNotIn("divide FOUND", local_lookup["prompt"])
-        self.assertEqual(
-            local_lookup["response_only_lines"],
-            [
-                "SYMBOL_STATUS: divide FOUND",
-                "SYMBOL_LOCATION: calculator.py:1",
-                "FILES_CHANGED: none",
-                "Harness: LOCAL_LOOKUP; passed: exact local symbol lookup; failed/skipped: none",
-            ],
-        )
+        self.assertNotIn("response_only_lines", local_lookup)
+        self.assertEqual(local_lookup["response_line_count"], 4)
         fixture = FIXTURES / local_lookup["fixture"]
         self.assertEqual(
             (fixture / "calculator.py").read_text(encoding="utf-8").splitlines()[0],
@@ -242,6 +239,7 @@ class EvalManifestTests(unittest.TestCase):
             "route": "LOCAL_LOOKUP",
             "response_contains": ["SYMBOL_STATUS: divide FOUND"],
             "response_not_contains": ["NOT_FOUND"],
+            "response_line_count": 2,
         }
         route_envelope = {
             "response": (
@@ -253,6 +251,11 @@ class EvalManifestTests(unittest.TestCase):
         with self.assertRaises(BenchmarkError):
             require_response_contract(
                 {"response": route_envelope["response"] + "\nNOT_FOUND"},
+                response_case,
+            )
+        with self.assertRaises(BenchmarkError):
+            require_response_contract(
+                {"response": route_envelope["response"] + "\nEXTRA"},
                 response_case,
             )
         with self.assertRaises(BenchmarkError):
@@ -488,7 +491,13 @@ printf '{"conversation_id":"must-not-leak","status":"SUCCESS","response":"%s","d
             fake_agy = pathlib.Path(temp_dir) / "agy"
             fake_agy.write_text(
                 """#!/bin/sh
-if [ "${FAKE_FORBIDDEN:-0}" = "1" ]; then
+if [ "${HARNESS_EVAL_CASE:-}" = "local-lookup-existing-symbol" ]; then
+  if [ "${FAKE_EXTRA_LINE:-0}" = "1" ]; then
+    printf '%s\\n' '{"status":"SUCCESS","conversation_id":"fake","response":"SYMBOL_STATUS: divide FOUND\\nSYMBOL_LOCATION: calculator.py:1\\nFILES_CHANGED: none\\nHarness: LOCAL_LOOKUP; passed: lookup; failed/skipped: none\\nEXTRA"}'
+  else
+    printf '%s\\n' '{"status":"SUCCESS","conversation_id":"fake","response":"SYMBOL_STATUS: divide FOUND\\nSYMBOL_LOCATION: calculator.py:1\\nFILES_CHANGED: none\\nHarness: LOCAL_LOOKUP; passed: lookup; failed/skipped: none"}'
+  fi
+elif [ "${FAKE_FORBIDDEN:-0}" = "1" ]; then
   printf '%s\\n' '{"status":"SUCCESS","conversation_id":"fake","response":"SYMBOL_STATUS: calculate_tax NOT_FOUND\\nFILES_CHANGED: none\\nsymbol_location: tax.py\\nHarness: REVIEW_VERIFY; passed: repository symbol search; failed/skipped: none"}'
 elif [ "${FAKE_INVENTED:-0}" = "1" ]; then
   printf '%s\\n' '{"status":"SUCCESS","conversation_id":"fake","response":"SYMBOL_STATUS: calculate_tax NOT_FOUND\\nFILES_CHANGED: none\\ncalculate_tax is defined in calculator.py:10\\nHarness: REVIEW_VERIFY; passed: repository symbol search; failed/skipped: none"}'
@@ -540,6 +549,39 @@ fi
             )
             self.assertNotEqual(invented.returncode, 0)
             self.assertIn("unexpected response lines", invented.stderr)
+
+            environment.pop("FAKE_INVENTED")
+            environment["HARNESS_EVAL_CASE"] = "local-lookup-existing-symbol"
+            accepted_line_count = subprocess.run(
+                ["bash", str(ROOT / "evals" / "run-smoke.sh")],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            self.assertEqual(
+                accepted_line_count.returncode,
+                0,
+                accepted_line_count.stderr,
+            )
+
+            environment["FAKE_EXTRA_LINE"] = "1"
+            rejected_line_count = subprocess.run(
+                ["bash", str(ROOT / "evals" / "run-smoke.sh")],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            self.assertNotEqual(rejected_line_count.returncode, 0)
+            self.assertIn(
+                "unexpected response line count",
+                rejected_line_count.stderr,
+            )
 
     def test_changed_path_contract_rejects_test_or_manifest_edits(self) -> None:
         required = {"src/policy.mjs", "src/store.mjs"}
