@@ -28,6 +28,7 @@ The manifest currently covers these language and routing surfaces:
 | Case | Language | Expected route | Deterministic check |
 | --- | --- | --- | --- |
 | `debug-regression` | Python | `IMPLEMENT` | `python3 -m unittest -q` |
+| `inline-fast-path-source` | Python | `IMPLEMENT` inline fast path | one named `unittest` method |
 | `review-read-only` | Python | `REVIEW_VERIFY` | read-only response assertions |
 | `local-lookup-existing-symbol` | Python | `LOCAL_LOOKUP` | exact positive symbol and location assertions |
 | `review-only-conceptual` | Python | `REVIEW_ONLY` | conceptual response assertions without runtime claims |
@@ -57,6 +58,13 @@ The nonexistent-symbol case is a read-only hallucination trap. Its fixture does
 not define `calculate_tax`; the response is constrained to two exact evidence
 lines plus one exact `Harness:` line, so invented definitions, locations, file
 changes, or extra prose fail the case.
+
+The inline-fast-path case is a private one-file source correction with one
+existing focused behavioral test. It must change only `normalize.py`, stay within
+one hunk and 10 added/deleted lines, and report `mode: inline-fast-path` on the
+normal `IMPLEMENT` route. The current CLI JSON envelope has no stable
+subagent trace, so the case verifies scope, result, and narrow evidence while
+the policy unit tests enforce that eligible tiny edits do not require subagents.
 
 The complex case declares and runs three independently named acceptance checks:
 

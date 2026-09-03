@@ -54,7 +54,9 @@ Beyond the terms issue, the harnesses do not use the same wire protocol:
 
 ## Accuracy Pipeline
 
-Localized, low-risk changes use the `IMPLEMENT` route: implementer, then verifier. Changes involving a public contract, auth/permissions, persistence, migration, concurrency, security, dependency/platform migration, or multiple interdependent components use `COMPLEX_IMPLEMENT`:
+Localized, low-risk changes use the `IMPLEMENT` route. Its conservative inline fast path lets the main agent directly perform a single-acceptance, deterministic change to one existing file and one contiguous hunk of at most 10 changed lines, then review the exact diff and run one narrow check. It does not invoke implementer or verifier subagents. The fast path excludes multi-constraint work, dirty overlap, external operations, generated/vendor/lock files, and public API/CLI/schema/config/install/CI/build/dependency/auth/security/persistence/migration/concurrency/permissions/secrets/legal/operator-workflow impact. Static prose, comments, and documentation use a static check; executable source still requires an existing focused behavioral check. Any uncertainty, scope growth, excluded concern, or missing/failed/inconclusive check promotes the work before another write.
+
+Other localized implementation uses the implementer and the verifier for material behavior. Changes involving a public contract, auth/permissions, persistence, migration, concurrency, security, dependency/platform migration, or multiple interdependent components use `COMPLEX_IMPLEMENT`:
 
 ```text
 research + plan
@@ -110,8 +112,10 @@ An invalid local citation causes one generic correction reminder for that user t
 When no behavioral or static check can run, the agent may explicitly print `HARNESS_NO_RUNNABLE_CHECK: <specific reason>` with a successful, non-redirected print command. This records a waiver, not a passing check, and the limitation must be reported in the final response. Without current evidence or a valid waiver, the gate requests verification once and then allows the next normal idle stop to prevent an infinite loop. Internal hook/state failures likewise fail open after at most one recovery reminder rather than locking the session. The hooks require Python 3.8+; when the runtime is unavailable, DLP falls back to `force_ask`, while context, formatting, and verification retain their documented safe fallback behavior.
 
 The workflow treats the final workspace write as opening verification debt and
-runs the smallest appropriate check before composing the handoff. It does not
-emit the waiver marker merely to avoid a Stop continuation. Custom subagents stay
+runs the smallest appropriate check before composing the handoff. An eligible
+inline edit closes that debt with one narrow successful check; medium, large, or
+risk-sensitive work retains its normal implementation and independent checks. It
+does not emit the waiver marker merely to avoid a Stop continuation. Custom subagents stay
 on `model: inherit` until a repeated, matched benchmark demonstrates both lower
 measured token usage and acceptable task quality; the documented custom-agent
 tiers do not expose a per-agent reasoning-effort field.

@@ -14,7 +14,7 @@ from evals.quota_benchmark import (
     terminal_result,
     workspace_snapshot,
 )
-from evals.validate_changed_paths import changed_path_error
+from evals.validate_changed_paths import changed_path_error, diff_shape_error
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -58,6 +58,7 @@ class EvalManifestTests(unittest.TestCase):
                     for command in case.get("requires", [])
                 ))
                 self.assertIsInstance(case.get("benchmark", False), bool)
+                self.assertIsInstance(case.get("inline_fast_path", False), bool)
                 response_line_count = case.get("response_line_count")
                 if response_line_count is not None:
                     self.assertIsInstance(response_line_count, int)
@@ -110,6 +111,52 @@ class EvalManifestTests(unittest.TestCase):
                     self.assertFalse(relative.is_absolute())
                     self.assertNotIn("..", relative.parts)
                     self.assertTrue((fixture / relative_path).is_file())
+
+                if case.get("inline_fast_path"):
+                    self.assertEqual(case["route"], "IMPLEMENT")
+                    self.assertEqual(len(required_paths), 1)
+                    self.assertEqual(required_paths, allowed_paths)
+                    self.assertTrue(case["verify"])
+                    self.assertFalse(case.get("acceptance_criteria", []))
+                    self.assertEqual(case.get("max_diff_hunks"), 1)
+                    self.assertEqual(case.get("max_changed_lines"), 10)
+
+    def test_inline_fast_path_source_case_has_a_focused_behavioral_check(
+        self,
+    ) -> None:
+        case = next(
+            case for case in self.cases
+            if case["id"] == "inline-fast-path-source"
+        )
+        focused_check = [
+            "python3",
+            "-m",
+            "unittest",
+            "-q",
+            "test_normalize.NormalizeTests.test_collapses_internal_spaces",
+        ]
+        self.assertTrue(case["inline_fast_path"])
+        self.assertEqual(case["route"], "IMPLEMENT")
+        self.assertEqual(case["required_changed_paths"], ["normalize.py"])
+        self.assertEqual(case["allowed_changed_paths"], ["normalize.py"])
+        self.assertEqual(case["max_diff_hunks"], 1)
+        self.assertEqual(case["max_changed_lines"], 10)
+        self.assertEqual(case["verify"], focused_check)
+        self.assertIn("Harness: IMPLEMENT", case["response_contains"])
+        self.assertIn("mode: inline-fast-path", case["response_contains"])
+        self.assertIn("test_collapses_internal_spaces", case["response_contains"])
+
+        fixture = FIXTURES / case["fixture"]
+        baseline = subprocess.run(
+            focused_check,
+            cwd=fixture,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        self.assertNotEqual(baseline.returncode, 0)
+        self.assertIn("test_collapses_internal_spaces", baseline.stderr)
 
     def test_complex_route_covers_multi_component_security_and_persistence(self) -> None:
         complex_cases = [case for case in self.cases if case["route"] == "COMPLEX_IMPLEMENT"]
@@ -533,7 +580,11 @@ fi
                 timeout=30,
                 check=False,
             )
-            self.assertNotEqual(rejected.returncode, 0)
+            self.assertNotEqual(
+                rejected.returncode,
+                0,
+                rejected.stdout + rejected.stderr,
+            )
             self.assertIn("response contains forbidden terms", rejected.stderr)
 
             environment.pop("FAKE_FORBIDDEN")
@@ -583,6 +634,63 @@ fi
                 rejected_line_count.stderr,
             )
 
+    def test_smoke_runner_requires_inline_mode_on_harness_line(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fake_agy = pathlib.Path(temp_dir) / "agy"
+            fake_agy.write_text(
+                """#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+
+target = Path("normalize.py")
+target.write_text(
+    target.read_text(encoding="utf-8").replace(
+        "return value.strip()",
+        'return " ".join(value.split())',
+    ),
+    encoding="utf-8",
+)
+if os.environ.get("FAKE_MODE_ON_STATUS") == "1":
+    response = "Harness: IMPLEMENT; mode: inline-fast-path; passed: test_collapses_internal_spaces; failed/skipped: none"
+else:
+    response = "I did not use mode: inline-fast-path.\\nHarness: IMPLEMENT; passed: test_collapses_internal_spaces; failed/skipped: none"
+print(json.dumps({"status": "SUCCESS", "conversation_id": "fake", "response": response}))
+""",
+                encoding="utf-8",
+            )
+            fake_agy.chmod(0o755)
+            environment = os.environ.copy()
+            environment["PATH"] = f"{temp_dir}{os.pathsep}{environment['PATH']}"
+            environment["HARNESS_EVAL_CASE"] = "inline-fast-path-source"
+
+            rejected = subprocess.run(
+                ["bash", str(ROOT / "evals" / "run-smoke.sh")],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn(
+                "mode is missing from the Harness status line",
+                rejected.stderr,
+            )
+
+            environment["FAKE_MODE_ON_STATUS"] = "1"
+            accepted = subprocess.run(
+                ["bash", str(ROOT / "evals" / "run-smoke.sh")],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+
     def test_changed_path_contract_rejects_test_or_manifest_edits(self) -> None:
         required = {"src/policy.mjs", "src/store.mjs"}
         allowed = set(required)
@@ -595,6 +703,48 @@ fi
         self.assertIsNotNone(error)
         self.assertIn("package.json", error or "")
         self.assertIn("test/store.test.mjs", error or "")
+
+    def test_inline_fast_path_diff_shape_rejects_extra_hunks_and_lines(self) -> None:
+        one_small_hunk = """--- a/normalize.py
++++ b/normalize.py
+@@ -2 +2 @@
+-    return value.strip()
++    return " ".join(value.split())
+"""
+        self.assertIsNone(diff_shape_error(one_small_hunk, 1, 10))
+
+        two_hunks = one_small_hunk + """@@ -6 +6 @@
+-    return value
++    return value.strip()
+"""
+        self.assertIn("2 hunks", diff_shape_error(two_hunks, 1, 10) or "")
+
+        oversized = "--- a/x.py\n+++ b/x.py\n@@ -1,6 +1,6 @@\n" + "-x\n+y\n" * 6
+        self.assertIn(
+            "12 added/deleted lines",
+            diff_shape_error(oversized, 1, 10) or "",
+        )
+
+        marker_like_content = """--- a/x.py
++++ b/x.py
+@@ -1,6 +1,6 @@
+---old
++++new
+---old
++++new
+---old
++++new
+---old
++++new
+---old
++++new
+---old
++++new
+"""
+        self.assertIn(
+            "12 added/deleted lines",
+            diff_shape_error(marker_like_content, 1, 10) or "",
+        )
 
 
 if __name__ == "__main__":

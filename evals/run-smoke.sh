@@ -86,8 +86,11 @@ PY
   reject_response_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("response_not_contains", [])))' "${cases_path}" "${case_index}")"
   only_response_lines_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("response_only_lines", [])))' "${cases_path}" "${case_index}")"
   response_line_count_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("response_line_count")))' "${cases_path}" "${case_index}")"
+  inline_fast_path="$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("inline_fast_path", False)).lower())' "${cases_path}" "${case_index}")"
   required_changed_paths_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("required_changed_paths", [])))' "${cases_path}" "${case_index}")"
   allowed_changed_paths_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])]["allowed_changed_paths"]))' "${cases_path}" "${case_index}")"
+  max_diff_hunks="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("max_diff_hunks", ""))' "${cases_path}" "${case_index}")"
+  max_changed_lines="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("max_changed_lines", ""))' "${cases_path}" "${case_index}")"
   requires_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("requires", [])))' "${cases_path}" "${case_index}")"
   verify_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])]["verify"]))' "${cases_path}" "${case_index}")"
   acceptance_criteria_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("acceptance_criteria", [])))' "${cases_path}" "${case_index}")"
@@ -161,7 +164,7 @@ PY
     continue
   fi
 
-  if ! python3 - "${response_path}" "${expect_response_json}" "${reject_response_json}" "${only_response_lines_json}" "${route}" "${response_line_count_json}" <<'PY'
+  if ! python3 - "${response_path}" "${expect_response_json}" "${reject_response_json}" "${only_response_lines_json}" "${route}" "${response_line_count_json}" "${inline_fast_path}" <<'PY'
 import json
 import sys
 
@@ -173,13 +176,20 @@ text = response.get("response", "")
 if "Harness:" not in text:
     raise SystemExit("missing Harness status line")
 expected_route = sys.argv[5]
-reported_routes = [
-    line.strip().partition(":")[2].split(";", 1)[0].strip()
-    for line in text.splitlines()
+harness_lines = [
+    line.strip() for line in text.splitlines()
     if line.strip().startswith("Harness:")
+]
+reported_routes = [
+    line.partition(":")[2].split(";", 1)[0].strip()
+    for line in harness_lines
 ]
 if expected_route not in reported_routes:
     raise SystemExit(f"Harness status line does not name route {expected_route}")
+if sys.argv[7] == "true" and not any(
+    "mode: inline-fast-path" in line for line in harness_lines
+):
+    raise SystemExit("inline fast-path mode is missing from the Harness status line")
 missing = [term for term in json.loads(sys.argv[2]) if term not in text]
 if missing:
     raise SystemExit(f"missing expected response terms: {missing}")
@@ -220,8 +230,22 @@ PY
     failures=$((failures + 1))
   fi
 
-  if ! python3 "${repo_root}/evals/validate_changed_paths.py" \
-    "${case_dir}" "${required_changed_paths_json}" "${allowed_changed_paths_json}"
+  if [[ -n "${max_diff_hunks}" || -n "${max_changed_lines}" ]]; then
+    if [[ -z "${max_diff_hunks}" || -z "${max_changed_lines}" ]]; then
+      printf '[fail] %s: incomplete diff-shape contract\n' "${case_id}" >&2
+      failures=$((failures + 1))
+      continue
+    fi
+    path_contract=(
+      "${case_dir}" "${required_changed_paths_json}" "${allowed_changed_paths_json}"
+      "${max_diff_hunks}" "${max_changed_lines}"
+    )
+  else
+    path_contract=(
+      "${case_dir}" "${required_changed_paths_json}" "${allowed_changed_paths_json}"
+    )
+  fi
+  if ! python3 "${repo_root}/evals/validate_changed_paths.py" "${path_contract[@]}"
   then
     printf '[fail] %s: changed-path contract failed\n' "${case_id}" >&2
     failures=$((failures + 1))

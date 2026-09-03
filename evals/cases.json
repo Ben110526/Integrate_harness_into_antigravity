@@ -12,6 +12,32 @@
     "verify": ["python3", "-m", "unittest", "-q"]
   },
   {
+    "id": "inline-fast-path-source",
+    "language": "python",
+    "route": "IMPLEMENT",
+    "fixture": "python-inline-fast-path",
+    "prompt": "Fix the private whitespace helper in normalize.py so the existing focused test passes. Edit only normalize.py. After the final write, run exactly python3 -m unittest -q test_normalize.NormalizeTests.test_collapses_internal_spaces. Finish with the policy-required Harness status line and include the focused test name in the verification evidence.",
+    "expect_change": true,
+    "inline_fast_path": true,
+    "response_contains": [
+      "test_collapses_internal_spaces",
+      "Harness: IMPLEMENT",
+      "mode: inline-fast-path"
+    ],
+    "required_changed_paths": ["normalize.py"],
+    "allowed_changed_paths": ["normalize.py"],
+    "max_diff_hunks": 1,
+    "max_changed_lines": 10,
+    "requires": ["python3"],
+    "verify": [
+      "python3",
+      "-m",
+      "unittest",
+      "-q",
+      "test_normalize.NormalizeTests.test_collapses_internal_spaces"
+    ]
+  },
+  {
     "id": "review-read-only",
     "language": "python",
     "route": "REVIEW_VERIFY",
