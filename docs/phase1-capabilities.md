@@ -51,10 +51,13 @@ fixtures create too many false positives; sensitive-data review remains routed t
 the security auditor when the task crosses a real data boundary.
 
 On the first invocation, bounded `PreInvocation` auto-context reads known, size-
-limited manifests (`package.json`, Python dependency manifests, `go.mod` and
-`Cargo.toml`), identifies supported frameworks and probes runtime versions with
-short timeouts. It injects a sanitized ephemeral summary no larger than 1 KiB. It
-does not run installers, contact external services or read secret files.
+limited manifests and workspace markers, identifies supported frameworks, and
+probes runtime versions with short timeouts. It also reports recognized workspace
+topology and candidate test/build/check commands. Only fixed topology labels and
+shell-safe, allowlisted package-script or Make-target names are included; script
+bodies and build recipes are not copied into model context. The resulting summary
+is advisory, ephemeral, and no larger than 1 KiB. It does not execute the candidate
+checks, run installers, contact external services, or read secret files.
 Antigravity's supported hook events and decision contract are documented in
 [Hooks](https://www.antigravity.google/docs/hooks/).
 
@@ -65,6 +68,23 @@ the hook may use configured project-local Prettier, configured `ruff`/`black` fr
 `PATH`, or `gofmt`. It uses a per-file lock and five-second formatter timeout, never
 downloads packages, and fails open; formatting is not evidence that verification
 passed.
+
+The Stop hook applies verification by changed scope. Logic-file writes and terminal
+mutations with unknown target scope require a later behavioral test or regression
+check. Documentation and known non-code mechanical edits may use a successful
+static check. If no relevant check can run, the agent must print
+`HARNESS_NO_RUNNABLE_CHECK: <specific reason>` with a successful, non-redirected
+print command and disclose the waiver in its final response. A waiver is not a
+pass. To avoid trapping a session, the hook issues at most one reminder before it
+fails open; it never executes a project command itself.
+
+For complex or multi-constraint changes, workflow skills maintain an acceptance
+ledger with stable `AC-*` IDs and carry each ID through implementation, review,
+verification, and handoff. Bug fixes prefer a focused red-state reproduction before
+product edits and the exact same check after the fix; unsafe or infeasible red-state
+execution must be explained and replaced with the strongest feasible falsification
+evidence. The smoke suite also includes a read-only nonexistent-symbol case that
+requires `NOT_FOUND` and rejects invented definitions, locations, or file changes.
 
 ## VS Code tasks
 

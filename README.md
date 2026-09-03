@@ -10,7 +10,7 @@ Describe the request normally. The AI selects the appropriate workflow and subag
 - 7 specialized subagents for research, implementation, review, verification, documentation, security, and databases.
 - Automatically promotes high-risk changes to a workflow with research/planning, implementation, independent review, and independent verification.
 - 10 skills for debugging, planning, implementation, review, testing, shipping, MCP, migration, ADRs, and benchmarking.
-- Lifecycle hooks prevent secret leakage before tool calls, load stack context on the first invocation, support opt-in auto-formatting, and require verification after the final edit.
+- Lifecycle hooks prevent secret leakage before tool calls, load a sanitized project blueprint on the first invocation, support opt-in auto-formatting, and require scope-appropriate verification after the final edit.
 - Protects secrets and dirty worktrees and guards against operations that could cause data loss; the DLP gate never grants tool permission by itself.
 - Includes smoke evals, fixture tests, and 5 coding MCP servers that the plugin registers for automatic AI selection.
 - Uses the official Antigravity client and Google account quota; no Gemini API key is required.
@@ -65,6 +65,8 @@ Explain why the build is failing.
 ```
 
 The harness is always active. The AI classifies each request automatically; requests involving bugs, risks, regressions, or security trigger both review and verification. Changes involving public APIs, authentication, migrations, concurrency, security, or multiple coupled components use the `COMPLEX_IMPLEMENT` route, which includes research/planning, implementation, independent review, and independent verification. At the end of the response, the `Harness:` line identifies the route and checks that were used.
+
+For complex or multi-constraint work, the harness creates a small acceptance ledger (`AC-1`, `AC-2`, ...) before editing. Each ID stays attached to its intended evidence through implementation, independent review, verification, and the final result matrix. For a bug fix, the preferred falsification workflow captures a focused test or safe reproduction that fails for the expected reason, applies the fix, and reruns that exact check unchanged. If a red-state reproduction is unsafe or infeasible, the agent must explain why and use the strongest feasible alternative rather than manufacture a failure.
 
 When schemas or migrations, security, or public documentation are materially relevant, the policy also routes to `harness-db-architect`, `harness-security-auditor`, or `harness-documenter`; they are not invoked ceremonially. The three new slash commands, `/harness-migration`, `/harness-adr`, and `/harness-benchmark`, remain explicit options rather than required steps.
 
@@ -132,6 +134,8 @@ The smoke eval consumes quota and pins `gemini-3.7-flash-high`, so run it manual
 ```bash
 ./evals/run-smoke.sh
 ```
+
+The suite includes a read-only hallucination trap for a nonexistent symbol: the response must report `NOT_FOUND`, must report that no files changed, and must not invent a definition or source location. Its complex fixture also runs a targeted check for every declared acceptance criterion in addition to the full fixture suite.
 
 ## Updating
 

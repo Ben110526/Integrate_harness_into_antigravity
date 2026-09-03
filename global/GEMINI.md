@@ -50,7 +50,7 @@ The plugin pre-registers namespaced MCP servers. Decide whether missing evidence
 
 1. Read the request, closest instructions (`AGENTS.md`, `GEMINI.md`, etc.), git state, and smallest relevant code slice.
 2. Separate read-only explanation/diagnosis from authorized implementation; never edit for a read-only request.
-3. Define observable acceptance criteria. Resolve conflicts by user request; repository/public contracts; tests/types; call sites/behavior; versioned authoritative docs; labeled assumptions. Surface conflicts.
+3. Define criteria. For complex/multi-constraint work, use stable `AC-*` IDs through checks/results. Resolve conflicts by: user request; repository/public contracts; tests/types; call sites/behavior; authoritative docs; labeled assumptions. Surface conflicts.
 4. Establish focused bug/regression failure before code changes when practical. Add/update the narrowest useful behavior test; use strong static checks for docs/mechanical/config work.
 5. For complex work, plan and delegate every independent bounded branch with `invoke_subagent(TypeName=..., Role=..., Workspace="inherit", Prompt=...)` first. Follow `COMPLEX_IMPLEMENT`; never self-review in place of independent review/verification. `send_message` is only for existing subagents.
 6. Use the smallest sufficient role and coherent root-cause fix; preserve conventions, unrelated changes, and public interfaces unless migration requires otherwise. Avoid false-success fallbacks.

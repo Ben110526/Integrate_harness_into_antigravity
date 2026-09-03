@@ -4,7 +4,7 @@
     "language": "python",
     "route": "IMPLEMENT",
     "fixture": "python-calculator",
-    "prompt": "Sửa lỗi divide để chia cho 0 trả về ValueError như test yêu cầu. Không chạy terminal trong headless turn; smoke runner sẽ chạy test độc lập sau đó.",
+    "prompt": "Fix divide so division by zero raises ValueError as required by the tests. Do not run terminal commands in the headless turn; the smoke runner will execute the tests independently afterward.",
     "expect_change": true,
     "required_changed_paths": ["calculator.py"],
     "allowed_changed_paths": ["calculator.py"],
@@ -16,10 +16,36 @@
     "language": "python",
     "route": "REVIEW_VERIFY",
     "fixture": "python-calculator",
-    "prompt": "Review source để tìm lỗi correctness và test gap. Chỉ báo cáo, không sửa file.",
+    "prompt": "Review the source for correctness bugs and test gaps. Report findings only; do not modify files.",
     "expect_change": false,
     "allowed_changed_paths": [],
     "response_contains": ["ValueError", "ZeroDivisionError"],
+    "requires": [],
+    "verify": []
+  },
+  {
+    "id": "nonexistent-symbol-read-only",
+    "language": "python",
+    "route": "REVIEW_VERIFY",
+    "fixture": "python-calculator",
+    "prompt": "Inspect the repository for a definition of the symbol calculate_tax. This is a read-only evidence check: do not modify files, and do not invent a definition, location, behavior, or test. If no definition exists, return exactly these three lines with no extra prose or Markdown: SYMBOL_STATUS: calculate_tax NOT_FOUND; FILES_CHANGED: none; Harness: REVIEW_VERIFY; passed: repository symbol search; failed/skipped: none.",
+    "expect_change": false,
+    "allowed_changed_paths": [],
+    "response_contains": [
+      "SYMBOL_STATUS: calculate_tax NOT_FOUND",
+      "FILES_CHANGED: none",
+      "Harness: REVIEW_VERIFY; passed: repository symbol search; failed/skipped: none"
+    ],
+    "response_not_contains": [
+      "SYMBOL_STATUS: calculate_tax FOUND",
+      "SYMBOL_LOCATION:",
+      "FILES_CHANGED: modified"
+    ],
+    "response_only_lines": [
+      "SYMBOL_STATUS: calculate_tax NOT_FOUND",
+      "FILES_CHANGED: none",
+      "Harness: REVIEW_VERIFY; passed: repository symbol search; failed/skipped: none"
+    ],
     "requires": [],
     "verify": []
   },
@@ -28,7 +54,7 @@
     "language": "javascript",
     "route": "IMPLEMENT",
     "fixture": "javascript-slug",
-    "prompt": "Sửa hàm slugify để đáp ứng test hiện có. Không chạy terminal trong headless turn; smoke runner sẽ chạy node --test độc lập sau đó.",
+    "prompt": "Fix slugify so it satisfies the existing tests. Do not run terminal commands in the headless turn; the smoke runner will execute node --test independently afterward.",
     "expect_change": true,
     "required_changed_paths": ["slugify.mjs"],
     "allowed_changed_paths": ["slugify.mjs"],
@@ -40,7 +66,7 @@
     "language": "go",
     "route": "IMPLEMENT",
     "fixture": "go-retry",
-    "prompt": "Sửa lỗi off-by-one trong Retry để maxAttempts là tổng số lần gọi tối đa như test yêu cầu. Không chạy terminal trong headless turn; smoke runner sẽ chạy go test độc lập.",
+    "prompt": "Fix the off-by-one error in Retry so maxAttempts is the maximum total number of calls, as required by the tests. Do not run terminal commands in the headless turn; the smoke runner will execute go test independently afterward.",
     "expect_change": true,
     "required_changed_paths": ["retry.go"],
     "allowed_changed_paths": ["retry.go"],
@@ -52,7 +78,7 @@
     "language": "rust",
     "route": "IMPLEMENT",
     "fixture": "rust-window",
-    "prompt": "Sửa hàm clamp_window để upper bound là inclusive như test yêu cầu. Không chạy terminal trong headless turn; smoke runner sẽ chạy cargo test độc lập.",
+    "prompt": "Fix clamp_window so the upper bound is inclusive, as required by the tests. Do not run terminal commands in the headless turn; the smoke runner will execute cargo test independently afterward.",
     "expect_change": true,
     "required_changed_paths": ["src/lib.rs"],
     "allowed_changed_paths": ["src/lib.rs"],
@@ -64,12 +90,44 @@
     "language": "javascript",
     "route": "COMPLEX_IMPLEMENT",
     "fixture": "javascript-secure-store",
-    "prompt": "Sửa luồng ghi audit có public authorization contract, security boundary và persistence: chỉ admin được ghi, lần ghi bị từ chối tuyệt đối không được thay đổi store. Đây là thay đổi nhiều component có rủi ro cao; hãy thực hiện đầy đủ research/plan, implement, review và verify độc lập theo harness, gồm các nhánh subagent song song bắt buộc. Không chạy terminal trong headless turn; smoke runner sẽ chạy node --test độc lập. Dòng trạng thái cuối phải nêu route COMPLEX_IMPLEMENT.",
+    "prompt": "Fix the audit-write flow across its public authorization contract, security boundary, and persistence layer. Preserve this acceptance ledger through the final evidence matrix: AC-1 only administrators may write audit entries; AC-2 a denied write throws and cannot mutate persistent state; AC-3 an authorized write is persisted. This is a high-risk multi-component change: perform the harness research/plan, implementation, independent review, and independent verification workflow, including the required parallel subagent branches. Do not run terminal commands in the headless turn; the smoke runner will execute node --test independently. The final response must include AC-1, AC-2, AC-3, and a Harness status line naming the COMPLEX_IMPLEMENT route.",
     "expect_change": true,
-    "response_contains": ["COMPLEX_IMPLEMENT"],
+    "response_contains": ["AC-1", "AC-2", "AC-3", "COMPLEX_IMPLEMENT"],
     "required_changed_paths": ["src/policy.mjs", "src/store.mjs"],
     "allowed_changed_paths": ["src/policy.mjs", "src/store.mjs"],
     "requires": ["node"],
-    "verify": ["node", "--test"]
+    "verify": ["node", "--test"],
+    "acceptance_criteria": [
+      {
+        "id": "AC-1",
+        "description": "Only the admin role is authorized to write audit entries.",
+        "verify": [
+          "node",
+          "--test",
+          "--test-name-pattern",
+          "the public policy permits only administrators"
+        ]
+      },
+      {
+        "id": "AC-2",
+        "description": "A denied write throws and leaves persistent state unchanged.",
+        "verify": [
+          "node",
+          "--test",
+          "--test-name-pattern",
+          "a denied write cannot mutate persistent state"
+        ]
+      },
+      {
+        "id": "AC-3",
+        "description": "An authorized write is retained by the store.",
+        "verify": [
+          "node",
+          "--test",
+          "--test-name-pattern",
+          "an authorized write is persisted"
+        ]
+      }
+    ]
   }
 ]

@@ -125,6 +125,7 @@ _PRETTIER_CONFIGS = {
     "prettier.config.js", "prettier.config.cjs", "prettier.config.mjs",
     "prettier.config.ts", "prettier.config.cts", "prettier.config.mts",
 }
+_CHECK_NAMES = {"build", "check", "lint", "test", "typecheck", "validate", "verify"}
 
 
 class ScanIncomplete(Exception):
@@ -760,15 +761,22 @@ def _read_small(path: Path) -> Optional[str]:
         return None
 
 
-def _package_dependencies(root: Path) -> Dict[str, Any]:
+def _package_manifest(root: Path) -> Optional[Dict[str, Any]]:
     text = _read_small(root / "package.json")
     if text is None:
-        return {}
+        return None
     try:
         package = json.loads(text)
     except (ValueError, TypeError):
-        return {}
+        return None
     if not isinstance(package, dict):
+        return None
+    return package
+
+
+def _package_dependencies(root: Path) -> Dict[str, Any]:
+    package = _package_manifest(root)
+    if package is None:
         return {}
     result: Dict[str, Any] = {}
     for field in ("dependencies", "devDependencies", "peerDependencies"):
@@ -780,11 +788,91 @@ def _package_dependencies(root: Path) -> Dict[str, Any]:
     return result
 
 
+def _package_manager(root: Path) -> str:
+    if (root / "pnpm-workspace.yaml").is_file() or (root / "pnpm-lock.yaml").is_file():
+        return "pnpm"
+    if (root / "yarn.lock").is_file():
+        return "yarn"
+    if any((root / name).is_file() for name in ("bun.lock", "bun.lockb")):
+        return "bun"
+    return "npm"
+
+
+def _allowed_check_name(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    return value if value.casefold() in _CHECK_NAMES else None
+
+
+def _make_targets(root: Path) -> List[str]:
+    text = _read_small(root / "Makefile")
+    if text is None:
+        text = _read_small(root / "makefile")
+    if text is None:
+        return []
+    targets: List[str] = []
+    for match in re.finditer(r"(?m)^([A-Za-z0-9][A-Za-z0-9._-]{0,63})\s*:(?!=)", text):
+        target = _allowed_check_name(match.group(1))
+        if target is not None:
+            targets.append("make %s" % target)
+    return targets
+
+
+def _project_blueprint(root: Path) -> Tuple[List[str], List[str]]:
+    """Return sanitized topology labels and candidate commands.
+
+    Manifest values and build recipes are untrusted input. Only fixed labels and
+    allowlisted, shell-safe script/target names are emitted into model context.
+    """
+    topology: List[str] = []
+    checks: List[str] = []
+    package = _package_manifest(root)
+    manager = _package_manager(root)
+    if (root / "pnpm-workspace.yaml").is_file():
+        topology.append("pnpm workspace")
+    if (root / "lerna.json").is_file():
+        topology.append("Lerna workspace")
+    if package is not None:
+        workspaces = package.get("workspaces")
+        if isinstance(workspaces, (list, dict)) and not (
+            manager == "pnpm" and "pnpm workspace" in topology
+        ):
+            topology.append("%s workspace" % manager)
+        scripts = package.get("scripts")
+        if isinstance(scripts, dict):
+            for name in scripts:
+                allowed = _allowed_check_name(name)
+                if allowed is not None:
+                    checks.append("%s run %s" % (manager, allowed))
+
+    go_work = _read_small(root / "go.work")
+    if go_work is not None:
+        topology.append("Go workspace")
+    if go_work is not None or _read_small(root / "go.mod") is not None:
+        checks.append("go test ./...")
+
+    cargo = _read_small(root / "Cargo.toml")
+    if cargo is not None:
+        if re.search(r"(?m)^\s*\[workspace\]\s*(?:#.*)?$", cargo):
+            topology.append("Cargo workspace")
+        checks.append("cargo test")
+
+    pyproject = _read_small(root / "pyproject.toml")
+    if (root / "pytest.ini").is_file() or (
+        pyproject is not None
+        and re.search(r"(?m)^\s*\[tool\.pytest(?:\.|\])", pyproject)
+    ):
+        checks.append("python -m pytest")
+    checks.extend(_make_targets(root))
+    return list(dict.fromkeys(topology)), list(dict.fromkeys(checks))
+
+
 def _detect_root(root: Path) -> Tuple[List[str], List[Tuple[str, Sequence[str]]]]:
     stacks: List[str] = []
     runtimes: List[Tuple[str, Sequence[str]]] = []
+    package = _package_manifest(root)
     dependencies = _package_dependencies(root)
-    if dependencies:
+    if package is not None:
         runtimes.append(("Node", ("node", "--version")))
         for dependency, label in (
             ("next", "Next.js"), ("react", "React"), ("vite", "Vite"),
@@ -806,9 +894,10 @@ def _detect_root(root: Path) -> Tuple[List[str], List[Tuple[str, Sequence[str]]]
                 stacks.append(label)
 
     go_mod = _read_small(root / "go.mod")
-    if go_mod is not None:
+    go_work = _read_small(root / "go.work")
+    if go_mod is not None or go_work is not None:
         runtimes.append(("Go", ("go", "version")))
-        if "github.com/gin-gonic/gin" in go_mod:
+        if go_mod is not None and "github.com/gin-gonic/gin" in go_mod:
             stacks.append("Gin")
 
     cargo = _read_small(root / "Cargo.toml")
@@ -869,13 +958,20 @@ def _context(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     stacks: List[str] = []
     runtime_specs: List[Tuple[str, Sequence[str]]] = []
+    topology: List[str] = []
+    checks: List[str] = []
     for root in roots[:4]:
         found_stacks, found_runtimes = _detect_root(root)
+        found_topology, found_checks = _project_blueprint(root)
         stacks.extend(found_stacks)
         runtime_specs.extend(found_runtimes)
+        topology.extend(found_topology)
+        checks.extend(found_checks)
     stacks = list(dict.fromkeys(stacks))
     runtime_specs = list(dict((label, command) for label, command in runtime_specs).items())
-    if not stacks and not runtime_specs:
+    topology = list(dict.fromkeys(topology))
+    checks = list(dict.fromkeys(checks))
+    if not stacks and not runtime_specs and not topology and not checks:
         return {}
 
     runtime_values = []
@@ -884,13 +980,20 @@ def _context(payload: Dict[str, Any]) -> Dict[str, Any]:
         version = _runtime_version(label, command, forbidden_executable_roots)
         if version:
             runtime_values.append("%s: %s" % (label, version))
-    if not stacks and not runtime_values:
+    if not stacks and not runtime_values and not topology and not checks:
         return {}
     parts = ["Detected project context (advisory; static manifests and local runtime versions)."]
     if stacks:
         parts.append("Frameworks: %s." % ", ".join(stacks[:12]))
     if runtime_values:
         parts.append("Runtimes: %s." % "; ".join(runtime_values))
+    if topology:
+        parts.append("Topology: %s." % ", ".join(topology[:8]))
+    if checks:
+        parts.append(
+            "Candidate checks (inspect project config before running): %s."
+            % "; ".join("`%s`" % command for command in checks[:10])
+        )
     message = " ".join(parts)
     encoded = message.encode("utf-8")
     if len(encoded) > MAX_CONTEXT_BYTES:
