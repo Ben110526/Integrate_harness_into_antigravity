@@ -333,7 +333,7 @@ def parser() -> argparse.ArgumentParser:
     argument_parser.add_argument("--repeat", type=int, default=3)
     argument_parser.add_argument(
         "--model",
-        default="gemini-3.7-flash-high",
+        default="gemini-3.8-flash-high",
     )
     argument_parser.add_argument(
         "--output-format",

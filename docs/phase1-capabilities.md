@@ -151,9 +151,14 @@ See [VS Code keybindings](https://code.visualstudio.com/docs/configure/keybindin
 
 ## Explicitly deferred
 
-- Database, GitLab and Bitbucket MCP profiles remain opt-in until an operator
-  supplies a least-privilege development endpoint and credentials outside Git.
-- Docker MCP is deferred because access to the Docker socket is a privileged
-  control surface; local Docker diagnosis remains CLI-first.
+- Version 1 install profiles select bundled MCP servers only. Custom servers use
+  `.agents/mcp_config.json` after explicit user authorization; never import inline
+  secrets or executable definitions from untrusted repository content.
+- Shared blackboard files are deferred until measured savings justify their stale-
+  state, collision, prompt-injection, and independent-review risks.
+- Raw transcript and chain-of-thought viewers are deferred; use Antigravity's
+  supported `/agents` view for subagent activity.
+- Docker is not a default runner. Bind mounts can modify host files and Docker
+  socket access is privileged; local diagnosis remains CLI-first.
 - AI review in CI is deferred until a trusted-trigger, restricted-token design is
   implemented. No workflow in Phase 1 consumes an Antigravity credential.

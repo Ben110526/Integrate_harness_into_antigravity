@@ -1,5 +1,7 @@
 # Auto Harness for Antigravity
 
+[![Model: Gemini 3.8 Flash High](https://img.shields.io/badge/Model-Gemini%203.8%20Flash%20High-8E24AA.svg)](#usage)
+
 Turn Antigravity CLI into a coding agent with a Codex/Claude Code-style workflow: it reads the project, analyzes the task, plans, edits code, reviews the changes, and verifies the result.
 
 Describe the request normally. The AI selects the appropriate workflow and subagents automatically — **there is no need to enter `/harness-plan`, `/harness-implement`, or `/harness-review`**.
@@ -16,7 +18,7 @@ Describe the request normally. The AI selects the appropriate workflow and subag
 - Uses the official Antigravity client and Google account quota; no Gemini API key is required.
 - Supports macOS, Linux, and Windows.
 
-## Installation
+## ⚡ Quick Start & Installation
 
 Clone the source:
 
@@ -25,25 +27,42 @@ git clone https://github.com/Ben110526/Integrate_harness_into_antigravity.git
 cd Integrate_harness_into_antigravity
 ```
 
-### macOS / Linux
+### Option A: Standard Installation (Local Development & Loopback Playwright)
 
-```bash
-./install.sh
-```
+- **macOS / Linux:**
+  ```bash
+  ./install.sh
+  ```
+  *(On macOS, you can also double-click `install.command`)*
 
-On macOS, you can also double-click `install.command`.
+- **Windows (PowerShell / Command Prompt):**
+  ```powershell
+  .\install.cmd
+  ```
+  *(Or run `powershell -ExecutionPolicy Bypass -File .\install.ps1`)*
 
-### Windows
+### Option B: Playwright Full Web Access (Explicit Opt-in)
 
-Double-click `install.cmd`, or run:
+By default, Playwright MCP is restricted to loopback (`localhost` / `127.0.0.1`). Prefer the exact allowlist described below when the destinations are known. On a trusted personal machine that truly needs arbitrary Internet access, install with the unrestricted flag:
 
-```powershell
-.\install.cmd
-```
+- **macOS / Linux:**
+  ```bash
+  ./install.sh --playwright-unrestricted
+  ```
 
-The installer installs Antigravity CLI when necessary, installs the harness, downloads the official GitHub MCP with checksum verification, and registers the remaining MCP servers through the plugin. On first use, a browser may open for Google sign-in or to complete GitHub/Sentry OAuth when the AI actually needs those services.
+- **Windows (PowerShell):**
+  ```powershell
+  .\install.ps1 -PlaywrightUnrestricted
+  ```
 
-MCP servers do not require separate installation, but the development machine must already have [Node.js 20.18.1+](https://nodejs.org/) (including `npx`) and [uv](https://docs.astral.sh/uv/) (including `uvx`). If a runtime, proxy, or GitHub Release is temporarily unavailable, the installer warns and installs a **core-only** version with no active MCP configuration; the policy, skills, subagents, and lifecycle hooks continue to work. Select this mode explicitly with `./install.sh --skip-mcp` or `.\install.ps1 -SkipMcp`, then rerun the installer normally to enable MCP.
+> [!TIP]
+> To return to loopback-only mode, clear `HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS`, set any active install profile to `mode: "loopback"` with `allowedOrigins: []` (or remove that profile), rerun the installer without the unrestricted flag, and start a new `agy` session.
+
+The installer installs Antigravity CLI when necessary, installs the harness, and registers the selected MCP inventory. If GitHub MCP is enabled, its official binary is downloaded and checksum-verified. On first use, a browser may open for Google sign-in or to complete GitHub/Sentry OAuth when the AI actually needs those services.
+
+MCP servers do not require separate installation, but some need [Node.js 20.18.1+](https://nodejs.org/) with `npx`, `uvx`, or the verified GitHub MCP binary. An unavailable optional dependency omits only its affected server or servers when possible. Select a core-only installation explicitly with `./install.sh --skip-mcp` or `.\install.ps1 -SkipMcp`.
+
+Version 1 of the optional install profile selects only the five bundled MCP servers. The installer auto-loads `<package-root>/harness.config.json`, or accepts `./install.sh --config <path>` and `.\install.ps1 -ConfigPath <path>`; it never searches a workspace, parent directory, or home directory. CLI and supported environment overrides take precedence over the profile, then safe defaults apply. See [`harness.config.example.json`](harness.config.example.json), reinstall after changes, and start a new `agy` session.
 
 When Antigravity CLI has just been installed, `install.sh` adds its directory to PATH idempotently for Fish or Nushell when it detects the corresponding shell. The equivalent configuration is `fish_add_path -g "$HOME/.local/bin"` for Fish and `$env.PATH = ($env.PATH | prepend ($nu.home-path | path join ".local" "bin"))` in `config.nu`.
 
@@ -82,11 +101,16 @@ Auto-formatting is disabled by default and should be enabled only for trusted re
 
 After the final workspace write, the agent must run the smallest scope-appropriate check before reporting. `HARNESS_NO_RUNNABLE_CHECK` remains an explicit waiver only when no relevant safe check exists; it is never a passing result and must be disclosed. The harness intentionally keeps custom subagents on `model: inherit`: Antigravity documents `inherit`, `flash`, and `pro` tiers, but does not document a per-agent effort setting or guarantee that `model: flash` lowers a Flash High parent. Model-tier changes therefore require measured token and quality evidence first.
 
-To prioritize coding accuracy, select **Gemini 3.7 Flash High** with `/model`; the selection is saved for later sessions. Use `/usage` to check quota, and run `./doctor.sh` to confirm that the High model is available on the current machine.
+> [!TIP]
+> **Recommended Model:** To prioritize coding accuracy, select **Gemini 3.8 Flash High**:
+> 1. Run `/model` inside `agy`.
+> 2. Select `gemini-3.8-flash-high`.
+>
+> The selection is saved for later sessions. Use `/usage` to check quota, and run `./doctor.sh` to confirm that the High model is available on the current machine.
 
 ## AI-selected MCP servers
 
-The plugin automatically registers namespaced MCP servers when the harness is installed. Users do not need to copy JSON, merge `.agents/mcp_config.json`, select a profile, or install individual servers. For each task, the AI prioritizes local source, compiler, and test evidence, then calls the smallest suitable MCP capability when additional evidence is needed:
+The plugin registers the enabled, available subset of its namespaced MCP servers when the harness is installed. Users do not select a server for each task: the AI prioritizes local source, compiler, and test evidence, then calls the smallest installed MCP capability when additional evidence is needed:
 
 - Context7: version-matched library documentation.
 - Serena: symbols, references, and diagnostics for large codebases that already contain `.serena/project.yml`; uninitialized repositories automatically fall back to local tools to avoid dirtying the workspace.
@@ -104,32 +128,36 @@ By default, Playwright can access HTTP(S) applications on any `localhost` or `12
 
 On a trusted personal development machine, allow Playwright to access any HTTP(S) origin:
 
-```bash
-./install.sh --playwright-unrestricted
-```
+- **macOS / Linux:**
+  ```bash
+  ./install.sh --playwright-unrestricted
+  ```
 
-Windows PowerShell:
-
-```powershell
-.\install.ps1 -PlaywrightUnrestricted
-```
+- **Windows (PowerShell):**
+  ```powershell
+  .\install.ps1 -PlaywrightUnrestricted
+  ```
 
 To allow only specific staging or preview origins instead:
 
-```bash
-HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS='https://preview.example.com;https://staging.example.com:8443' ./install.sh
-```
+- **macOS / Linux:**
+  ```bash
+  HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS='https://preview.example.com;https://staging.example.com:8443' ./install.sh
+  ```
 
-```powershell
-$env:HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS = 'https://preview.example.com;https://staging.example.com:8443'
-.\install.ps1
-```
+- **Windows (PowerShell):**
+  ```powershell
+  $env:HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS = 'https://preview.example.com;https://staging.example.com:8443'
+  .\install.ps1
+  ```
 
-Unrestricted mode removes the origin filter but retains `--isolated`, `--headless`, and Antigravity's Ask permission. It cannot be combined with `--skip-mcp` or `HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS`. Rerun the installer without either network option to restore the loopback-only default, then start a new `agy` session. Treat all external page content as untrusted.
+Unrestricted mode removes the origin filter but retains `--isolated`, `--headless`, and Antigravity's Ask permission. It cannot be combined with `--skip-mcp` or `HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS`. To restore loopback-only behavior, clear that environment variable, set any active profile to `mode: "loopback"` with `allowedOrigins: []` (or remove it), rerun without the unrestricted flag, and start a new session. Treat all external page content as untrusted.
 
 Large repositories can create the official Serena configuration with `uvx --from serena-agent==1.7.0 serena project create .`; this command creates `.serena/project.yml`, so review it and then commit or ignore it according to the project's conventions. Add `--index` to create the symbol cache immediately.
 
-See [automatic selection, authentication, and fallback behavior](docs/mcp-profiles.md). The AI never writes tokens, cookies, or client secrets to the repository. Provider OAuth still requires one-time user approval because the AI is not allowed to authorize account access by itself. Database, Docker, GitLab, and Bitbucket MCP servers remain opt-in until each environment has an endpoint and least-privilege access; see the [Phase 1 scope](docs/phase1-capabilities.md).
+See [automatic selection, authentication, and fallback behavior](docs/mcp-profiles.md). The AI never writes tokens, cookies, or client secrets to the repository. Provider OAuth still requires one-time user approval because the AI is not allowed to authorize account access by itself.
+
+Custom servers are outside the install profile. Add one through Antigravity's native workspace `.agents/mcp_config.json` only after explicitly authorizing its executable, arguments, access, and credential source. Never copy inline secrets or executable definitions from an untrusted repository. Start a new session after reviewing the configuration; the AI then selects the server automatically when it is relevant.
 
 ## Source checks
 
@@ -139,7 +167,7 @@ These checks do not require an Antigravity account:
 ./tests/test-source.sh
 ```
 
-The smoke eval consumes quota and pins `gemini-3.7-flash-high`, so run it manually only after installing the plugin:
+The smoke eval consumes quota and pins `gemini-3.8-flash-high`, so run it manually only after installing the plugin:
 
 ```bash
 ./evals/run-smoke.sh

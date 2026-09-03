@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Ben110526/Integrate_harness_into_antigravity/schemas/harness.config.schema.json",
+  "title": "Antigravity Engineering Harness Configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "mcp"],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "mcp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["servers"],
+      "properties": {
+        "servers": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["context7", "serena", "playwright", "github", "sentry"],
+          "properties": {
+            "context7": {
+              "$ref": "#/$defs/toggle"
+            },
+            "serena": {
+              "$ref": "#/$defs/toggle"
+            },
+            "playwright": {
+              "$ref": "#/$defs/playwright"
+            },
+            "github": {
+              "$ref": "#/$defs/toggle"
+            },
+            "sentry": {
+              "$ref": "#/$defs/toggle"
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "toggle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "playwright": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "mode", "allowedOrigins"],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "mode": {
+          "enum": ["loopback", "allowlist", "unrestricted"]
+        },
+        "allowedOrigins": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "Exact HTTP(S) origins. The installer also rejects duplicates after URL-origin normalization (for example, case changes or an explicit default port).",
+          "items": {
+            "type": "string",
+            "pattern": "^https?://[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?::(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?$"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "mode": {
+                "const": "allowlist"
+              }
+            },
+            "required": ["mode"]
+          },
+          "then": {
+            "properties": {
+              "allowedOrigins": {
+                "minItems": 1
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "allowedOrigins": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
