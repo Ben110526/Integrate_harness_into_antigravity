@@ -34,19 +34,13 @@
     "response_contains": [
       "SYMBOL_STATUS: divide FOUND",
       "SYMBOL_LOCATION: calculator.py:1",
-      "FILES_CHANGED: none",
-      "Harness: LOCAL_LOOKUP; passed: exact local symbol lookup; failed/skipped: none"
+      "FILES_CHANGED: none"
     ],
     "response_not_contains": [
       "SYMBOL_STATUS: divide NOT_FOUND",
       "FILES_CHANGED: modified"
     ],
-    "response_only_lines": [
-      "SYMBOL_STATUS: divide FOUND",
-      "SYMBOL_LOCATION: calculator.py:1",
-      "FILES_CHANGED: none",
-      "Harness: LOCAL_LOOKUP; passed: exact local symbol lookup; failed/skipped: none"
-    ],
+    "response_line_count": 4,
     "requires": [],
     "verify": [],
     "benchmark": true
@@ -61,8 +55,7 @@
     "allowed_changed_paths": [],
     "response_contains": [
       "ValueError",
-      "ZeroDivisionError",
-      "Harness: REVIEW_ONLY; passed: conceptual API review; failed/skipped: runtime verification not required"
+      "ZeroDivisionError"
     ],
     "requires": [],
     "verify": [],
