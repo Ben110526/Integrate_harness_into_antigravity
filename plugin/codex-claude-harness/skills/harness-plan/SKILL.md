@@ -13,4 +13,6 @@ description: Build an evidence-based implementation plan for complex, cross-file
 6. Produce a short ordered plan with concrete files/components and verification for each stage.
 7. Verify cited source paths and symbols before treating them as facts. Label only non-established claims as `[HYPOTHESIS]`, `[ASSUMPTION]`, or `[UNRESOLVED]`; do not present missing evidence as established. Do not invent requirements.
 
+If an undiscoverable decision would materially change product behavior, architecture, security, data, cost, or an irreversible action after the evidence and cheapest safe check are exhausted, use `harness-clarify` for one bounded user choice. Do not use clarification as a substitute for repository discovery.
+
 If the user requested both planning and implementation, continue into implementation after the plan unless a missing decision would materially change the result. If the request is plan-only, remain read-only.

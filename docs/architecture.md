@@ -66,7 +66,38 @@ independent review + verification
 fix findings (if any) + final verification
 ```
 
+Two bounded read-only routes avoid unnecessary orchestration without weakening
+negative or behavioral claims. `LOCAL_LOOKUP` permits the main agent to use at
+most two local `grep_search` or `view_file` calls for one exact positive path or
+symbol lookup. It cannot use shell, MCP, network or write tools, infer absence,
+or make cross-file, correctness, risk or security claims. Zero, multiple or
+conflicting results, or the need for another read, promote the task before further
+inspection. `REVIEW_ONLY` uses an independent reviewer for theoretical or static
+assessment with no executable behavioral claim. A concrete or executable finding
+promotes the route before reporting. Concrete code defects, runtime
+behavior, reproduction, security behavior and changed-code review remain
+`REVIEW_VERIFY`, preserving an independent verifier.
+
 Complex or multi-constraint work starts with a compact acceptance ledger. Stable IDs (`AC-1`, `AC-2`, ...) bind each observable requirement to intended evidence and a verification check; the implementer, reviewer, verifier, and final handoff preserve those IDs. Bug fixes use falsification where practical: capture a focused test or safe reproduction that fails for the expected reason before product edits, then rerun the same command unchanged after the fix. If that red state is unsafe or infeasible, the agent records the reason and uses the strongest feasible alternative. Source paths and symbols must be verified before citation, and non-established claims are labeled `[HYPOTHESIS]`, `[ASSUMPTION]`, or `[UNRESOLVED]`.
+
+## Material clarification flow
+
+The harness resolves ambiguity from the request, repository contracts, tests and
+types, call sites, version-matched documentation, and the cheapest safe
+discriminating check before asking the user. If a remaining choice would
+materially change behavior, architecture, security, data, cost, or an irreversible
+action, only the main agent invokes `/harness-clarify` and Antigravity's native
+`ask_question` tool. A background subagent never waits on an interactive prompt;
+it returns `[UNRESOLVED]` with evidence, mutually exclusive options, tradeoffs and
+an evidence-backed recommendation when one exists.
+
+Interactive questions are bounded to one decision at a time and normally use
+single-select with two or three options. Multi-select is used only for independent,
+compatible choices. If the tool is unavailable, the session is headless, or the
+prompt is cancelled, the main agent asks the same question once in its normal
+response and pauses only the dependent work. Tool permissions, OAuth,
+credentials, and destructive-action approval continue through their dedicated
+platform flows; `harness-clarify` cannot grant or bypass them.
 
 The `PreToolUse` DLP hook hard-denies only high-confidence private-key or credential material, or attempts to commit, print, or transmit a sensitive `.env` file. JWTs and ambiguous signals use `force_ask`; the hook never grants permission for safe operations. During the first invocation, `PreInvocation` builds a bounded, temporary project blueprint from static manifests and workspace markers. It reports detected frameworks, local runtime versions, workspace topology, and candidate checks. Only fixed topology labels and shell-safe, allowlisted script or Make target names enter model context; package script bodies and build recipes do not. Candidate commands are advisory and must be checked against project configuration before execution. Auto-formatting is disabled by default, is enabled only with `HARNESS_AUTO_FORMAT=1`, uses an already-installed formatter on the exact file just written, and does not replace testing.
 
@@ -77,6 +108,13 @@ The same Stop hook performs bounded, best-effort citation grounding from the cur
 An invalid local citation causes one generic correction reminder for that user turn, then fails open to prevent a Stop loop. This is structural path-and-line grounding, not semantic entailment: it cannot prove that prose truthfully describes the cited lines and does not catch an uncited hallucination. Workflow requirements, independent review, behavioral verification, and hallucination-trap evals therefore remain separate controls.
 
 When no behavioral or static check can run, the agent may explicitly print `HARNESS_NO_RUNNABLE_CHECK: <specific reason>` with a successful, non-redirected print command. This records a waiver, not a passing check, and the limitation must be reported in the final response. Without current evidence or a valid waiver, the gate requests verification once and then allows the next normal idle stop to prevent an infinite loop. Internal hook/state failures likewise fail open after at most one recovery reminder rather than locking the session. The hooks require Python 3.8+; when the runtime is unavailable, DLP falls back to `force_ask`, while context, formatting, and verification retain their documented safe fallback behavior.
+
+The workflow treats the final workspace write as opening verification debt and
+runs the smallest appropriate check before composing the handoff. It does not
+emit the waiver marker merely to avoid a Stop continuation. Custom subagents stay
+on `model: inherit` until a repeated, matched benchmark demonstrates both lower
+measured token usage and acceptable task quality; the documented custom-agent
+tiers do not expose a per-agent reasoning-effort field.
 
 Smoke evals exercise both sides of the evidence contract. A read-only nonexistent-symbol case requires an exact `NOT_FOUND` result and forbids claims of a definition, location, or file mutation. The complex fixture declares independently named acceptance criteria and runs each targeted check as well as the full suite. These are behavioral signals; the headless JSON envelope still cannot prove exact subagent scheduling order.
 

@@ -29,6 +29,8 @@ The manifest currently covers these language and routing surfaces:
 | --- | --- | --- | --- |
 | `debug-regression` | Python | `IMPLEMENT` | `python3 -m unittest -q` |
 | `review-read-only` | Python | `REVIEW_VERIFY` | read-only response assertions |
+| `local-lookup-existing-symbol` | Python | `LOCAL_LOOKUP` | exact positive symbol and location assertions |
+| `review-only-conceptual` | Python | `REVIEW_ONLY` | conceptual response assertions without runtime claims |
 | `nonexistent-symbol-read-only` | Python | `REVIEW_VERIFY` | required `NOT_FOUND` evidence and forbidden hallucination markers |
 | `javascript-regression` | JavaScript | `IMPLEMENT` | `node --test` |
 | `go-regression` | Go | `IMPLEMENT` | `go test ./...` |
@@ -69,3 +71,56 @@ review/verification, but the current CLI JSON envelope exposes no stable
 subagent trace. This is therefore a behavioral proxy, not proof of exact
 scheduling order. Treat one run as a smoke signal, not a stable benchmark;
 compare multiple runs before changing policy.
+
+## Opt-in quota benchmark
+
+`quota_benchmark.py` compares repeated runs of read-only, benchmark-enabled
+cases. It is separate from the source tests and smoke runner. It refuses to call
+the model unless the installed harness policy, agents, and skills match this
+source tree and every invocation supplies both explicit case IDs and
+`--confirm-quota-use`. Rerun the installer after changing revisions:
+
+```bash
+python3 evals/quota_benchmark.py \
+  --case local-lookup-existing-symbol \
+  --case review-only-conceptual \
+  --repeat 3 \
+  --model gemini-3.7-flash-high \
+  --confirm-quota-use > benchmark.ndjson
+```
+
+That example makes six billable/quota-consuming model calls: three fresh runs
+for each selected route. Use at least two repeats, keep the same model and
+repeat count when comparing revisions, and inspect distributions rather than
+treating one sample as proof.
+
+The runner validates observable response contracts and usage, but the current
+CLI exposes no stable tool/subagent trace. Results are therefore a behavioral
+proxy: a reported route is not proof that the corresponding reads or subagent
+were actually invoked. Do not use this benchmark alone to change agent model
+tiers; add trace validation if the CLI exposes it in a future stable contract.
+
+Each run receives a temporary copy of its fixture in plan mode and rejects the
+sample if that copy changes. The runner never modifies source fixtures, enables
+permission bypasses, or inspects credential files. Its own output does not
+persist or emit model responses, conversation IDs, or CLI diagnostics;
+Antigravity may still retain its normal local conversation history according to
+the client configuration. Standard output is NDJSON containing only case/route
+metadata, status, duration, the source-harness digest, and documented `usage`
+counters (`input_tokens`, `output_tokens`, `thinking_tokens`,
+`cache_read_tokens`, and `total_tokens`). Both official `json` and `stream-json`
+envelopes are supported:
+
+```bash
+python3 evals/quota_benchmark.py \
+  --case local-lookup-existing-symbol \
+  --repeat 3 \
+  --output-format stream-json \
+  --confirm-quota-use
+```
+
+The terminal `result.usage` field is the source of truth; intermediate stream
+events are deliberately discarded. See the official
+[Antigravity headless-mode contract](https://antigravity.google/docs/cli/headless/)
+for field definitions. A failed or timed-out sample is reported by error type
+without relaying CLI diagnostics that might contain private environment data.

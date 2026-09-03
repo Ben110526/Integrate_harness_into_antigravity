@@ -253,7 +253,7 @@ for archive, checksum in windows_archives.items():
 name_pattern = re.compile(r"^name:\s*(\S+)\s*$", re.MULTILINE)
 expected_inventory = {
     "skill": {
-        "harness-adr", "harness-benchmark", "harness-debug", "harness-implement",
+        "harness-adr", "harness-benchmark", "harness-clarify", "harness-debug", "harness-implement",
         "harness-mcp-profile", "harness-migration", "harness-plan", "harness-review",
         "harness-ship", "harness-test",
     },
