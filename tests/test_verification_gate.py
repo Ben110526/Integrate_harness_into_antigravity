@@ -123,6 +123,370 @@ class VerificationGateTests(unittest.TestCase):
             error=error,
         )
 
+    def transcript(self, *records: dict) -> Path:
+        path = self.artifacts / ".system_generated" / "logs" / "transcript.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "".join(json.dumps(record) + "\n" for record in records),
+            encoding="utf-8",
+        )
+        return path
+
+    @staticmethod
+    def user_record(content: str, step: int = 1) -> dict:
+        return {
+            "step_index": step,
+            "source": "USER_EXPLICIT",
+            "type": "USER_INPUT",
+            "status": "DONE",
+            "content": content,
+        }
+
+    @staticmethod
+    def model_record(content: str, step: int = 2, **overrides) -> dict:
+        return {
+            "step_index": step,
+            "source": "MODEL",
+            "type": "PLANNER_RESPONSE",
+            "status": "DONE",
+            "content": content,
+            **overrides,
+        }
+
+    def grounded_stop(self, transcript: Path, execution: int = 0, **overrides) -> dict:
+        return self.stop(
+            execution=execution,
+            transcriptPath=str(transcript),
+            **overrides,
+        )
+
+    def test_grounding_accepts_valid_local_markdown_citations(self) -> None:
+        source = self.workspace / "src" / "app.py"
+        source.parent.mkdir()
+        source.write_text("first\nsecond\n", encoding="utf-8")
+        guide = self.workspace / "docs" / "My Guide.md"
+        guide.parent.mkdir()
+        guide.write_text("title\ndetails\n", encoding="utf-8")
+        transcript = self.transcript(
+            self.user_record("Inspect the code."),
+            self.model_record(
+                "See [relative](src/app.py:2), "
+                f"[absolute](<{source}:1>), "
+                f"[file URI]({guide.as_uri()}#L2), and "
+                f"raw {source.as_uri()}#L1, plus "
+                "[remote docs](https://example.com/missing.py)."
+            ),
+        )
+
+        self.assertEqual(self.grounded_stop(transcript), {"decision": "allow"})
+
+    def test_grounding_accepts_line_ranges_columns_and_anchors(self) -> None:
+        source = self.workspace / "src" / "app.py"
+        source.parent.mkdir()
+        source.write_text("one\ntwo\nthree\n", encoding="utf-8")
+        transcript = self.transcript(
+            self.user_record("Inspect the code."),
+            self.model_record(
+                "See [range](src/app.py:1-3), [column](src/app.py:2:40), "
+                "and [anchor](src/app.py#L2-L3)."
+            ),
+        )
+        self.assertEqual(self.grounded_stop(transcript), {"decision": "allow"})
+
+    def test_grounding_supports_markdown_titles_and_non_line_fragments(self) -> None:
+        source = self.workspace / "README.md"
+        source.write_text("# Usage\n", encoding="utf-8")
+        transcript = self.transcript(
+            self.user_record("Inspect the docs."),
+            self.model_record(
+                '[source](README.md:1 "verified source"), '
+                "[heading](README.md#usage), [same page](#usage), and "
+                "[phone](tel:+15551234567)."
+            ),
+        )
+        self.assertEqual(self.grounded_stop(transcript), {"decision": "allow"})
+
+        transcript = self.transcript(
+            self.user_record("Inspect the docs."),
+            self.model_record('[missing](missing.py:1 "source title")'),
+        )
+        self.assertEqual(self.grounded_stop(transcript)["decision"], "continue")
+
+    def test_grounding_retries_once_for_invalid_path_or_line(self) -> None:
+        source = self.workspace / "src" / "app.py"
+        source.parent.mkdir()
+        source.write_text("only line\n", encoding="utf-8")
+        transcript = self.transcript(
+            self.user_record("Inspect the code."),
+            self.model_record("See [source](src/app.py:99) and [missing](missing.py)."),
+        )
+
+        first = self.grounded_stop(transcript)
+        self.assertEqual(first["decision"], "continue")
+        self.assertIn("citation", first["reason"].casefold())
+        self.assertNotIn("missing.py", first["reason"])
+
+        second = self.grounded_stop(transcript, execution=1)
+        self.assertEqual(second["decision"], "allow")
+        self.assertIn("citation", second["reason"].casefold())
+        self.assertIn("one reminder", second["reason"].casefold())
+
+    def test_grounding_correction_and_new_user_turn_reset_retry(self) -> None:
+        source = self.workspace / "app.py"
+        source.write_text("value = 1\n", encoding="utf-8")
+        user = self.user_record("Inspect the code.")
+        bad = self.model_record("See [source](missing.py:1).")
+        transcript = self.transcript(user, bad)
+        self.assertEqual(self.grounded_stop(transcript)["decision"], "continue")
+
+        corrected = self.model_record("See [source](app.py:1).", step=3)
+        transcript = self.transcript(user, bad, corrected)
+        self.assertEqual(
+            self.grounded_stop(transcript, execution=1),
+            {"decision": "allow"},
+        )
+
+        transcript = self.transcript(
+            user,
+            bad,
+            corrected,
+            self.user_record("Inspect another claim.", step=4),
+            self.model_record("See [source](still-missing.py:1).", step=5),
+        )
+        self.assertEqual(self.grounded_stop(transcript)["decision"], "continue")
+
+    def test_grounding_ignores_non_citations_and_non_model_content(self) -> None:
+        transcript = self.transcript(
+            self.user_record("What about [fake](missing-user.py:1)?"),
+            {
+                "step_index": 2,
+                "source": "SYSTEM",
+                "type": "TOOL_RESPONSE",
+                "status": "DONE",
+                "content": "[fake](missing-tool.py:1)",
+            },
+            self.model_record(
+                "Plain missing.py:1, `[inline](missing-inline.py:1)`, "
+                "![image](missing-image.png), and\n"
+                "```md\n[fenced](missing-fenced.py:1)\n```\n"
+                "[remote](https://example.com/missing.py) are not local citations."
+            ),
+        )
+        self.assertEqual(self.grounded_stop(transcript), {"decision": "allow"})
+
+    def test_grounding_rejects_outside_directory_and_symlink_targets_generically(self) -> None:
+        source_dir = self.workspace / "src"
+        source_dir.mkdir()
+        outside = self.base / "outside-secret.py"
+        outside.write_text("secret = True\n", encoding="utf-8")
+        targets = (
+            "[directory](src)",
+            "[traversal](../outside-secret.py:1)",
+            f"[absolute]({outside}:1)",
+        )
+        if os.name != "nt":
+            (source_dir / "link.py").symlink_to(outside)
+            targets += ("[symlink](src/link.py:1)",)
+
+        state_path = self.artifacts / GATE_MODULE.STATE_FILE
+        for index, target in enumerate(targets, start=1):
+            with self.subTest(target=target):
+                state_path.unlink(missing_ok=True)
+                transcript = self.transcript(
+                    self.user_record("Inspect the code."),
+                    self.model_record(target, step=index + 1),
+                )
+                result = self.grounded_stop(transcript)
+                self.assertEqual(result["decision"], "continue")
+                self.assertNotIn("outside-secret", result["reason"])
+
+    def test_grounding_rejects_malformed_ranges_and_ambiguous_roots(self) -> None:
+        source = self.workspace / "app.py"
+        source.write_text("one\ntwo\n", encoding="utf-8")
+        second_root = self.base / "second-workspace"
+        second_root.mkdir()
+        (second_root / "app.py").write_text("other\n", encoding="utf-8")
+        cases = (
+            ("[zero](app.py:0)", [str(self.workspace)]),
+            ("[reversed](app.py:2-1)", [str(self.workspace)]),
+            ("[bad escape](app%ZZ.py:1)", [str(self.workspace)]),
+            ("[query](app.py?raw=1)", [str(self.workspace)]),
+            ("[zero column](app.py:1:0)", [str(self.workspace)]),
+            ("[host](file://server/app.py#L1)", [str(self.workspace)]),
+            ("[ambiguous](app.py:1)", [str(self.workspace), str(second_root)]),
+        )
+        state_path = self.artifacts / GATE_MODULE.STATE_FILE
+        for index, (citation, roots) in enumerate(cases, start=1):
+            with self.subTest(citation=citation):
+                state_path.unlink(missing_ok=True)
+                transcript = self.transcript(
+                    self.user_record("Inspect the code."),
+                    self.model_record(citation, step=index + 1),
+                )
+                result = self.grounded_stop(transcript, workspacePaths=roots)
+                self.assertEqual(result["decision"], "continue")
+
+    def test_grounding_rejects_percent_decoded_controls_as_citations(self) -> None:
+        cases = (
+            "[nul](missing%00.py:1)",
+            "[newline](missing%0A.py:1)",
+            "[file nul](file:///missing%00.py#L1)",
+            "[file fragment](file:///missing.py#L1%00)",
+        )
+        state_path = self.artifacts / GATE_MODULE.STATE_FILE
+        for index, citation in enumerate(cases, start=1):
+            with self.subTest(citation=citation):
+                state_path.unlink(missing_ok=True)
+                transcript = self.transcript(
+                    self.user_record("Inspect the code."),
+                    self.model_record(citation, step=index + 1),
+                )
+                result = self.grounded_stop(transcript)
+                self.assertEqual(result["decision"], "continue")
+                self.assertIn("citation", result["reason"].casefold())
+
+    def test_grounding_uses_only_latest_complete_untruncated_model_response(self) -> None:
+        source = self.workspace / "app.py"
+        source.write_text("value = 1\n", encoding="utf-8")
+        user = self.user_record("Inspect the code.")
+        prior_bad = self.model_record("[bad](missing.py:1)")
+        latest_good = self.model_record("[good](app.py:1)", step=3)
+        transcript = self.transcript(user, prior_bad, latest_good)
+        self.assertEqual(self.grounded_stop(transcript), {"decision": "allow"})
+
+        unavailable_records = (
+            self.model_record("[bad](missing.py:1)", step=4, status="RUNNING"),
+            self.model_record(
+                "[bad](missing.py:1)", step=4, truncated_fields=["content"]
+            ),
+            self.model_record(
+                "[bad](missing.py:1)", step=4, tool_calls=[{"name": "view_file"}]
+            ),
+        )
+        for record in unavailable_records:
+            with self.subTest(record=record):
+                transcript = self.transcript(user, prior_bad, latest_good, record)
+                self.assertEqual(
+                    self.grounded_stop(transcript),
+                    {"decision": "allow"},
+                )
+
+        transcript = self.transcript(user, prior_bad, latest_good)
+        with transcript.open("a", encoding="utf-8") as handle:
+            handle.write('{"source":"MODEL"')
+        self.assertEqual(self.grounded_stop(transcript), {"decision": "allow"})
+
+        unknown_model = self.model_record(
+            "[new shape](missing.py:1)", step=4, type="FINAL_RESPONSE"
+        )
+        transcript = self.transcript(user, prior_bad, latest_good, unknown_model)
+        self.assertEqual(self.grounded_stop(transcript), {"decision": "allow"})
+
+    def test_grounding_preserves_unicode_separators_inside_json_records(self) -> None:
+        records = (
+            self.user_record("Inspect the code."),
+            self.model_record("First paragraph.\u2028[missing](missing.py:1)"),
+        )
+        transcript = self.transcript()
+        transcript.write_text(
+            "".join(
+                json.dumps(record, ensure_ascii=False) + "\n" for record in records
+            ),
+            encoding="utf-8",
+        )
+        result = self.grounded_stop(transcript)
+        self.assertEqual(result["decision"], "continue")
+        self.assertIn("citation", result["reason"].casefold())
+
+    def test_grounding_bounds_transcript_response_and_citation_count(self) -> None:
+        source = self.workspace / "app.py"
+        source.write_text("value = 1\n", encoding="utf-8")
+        user = self.user_record("Inspect the code.")
+        valid = self.model_record("[good](app.py:1)")
+        transcript = self.transcript(user, valid)
+        prefix = "x" * (GATE_MODULE.MAX_TRANSCRIPT_TAIL_BYTES + 128) + "\n"
+        transcript.write_text(
+            prefix + json.dumps(user) + "\n" + json.dumps(valid) + "\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(self.grounded_stop(transcript), {"decision": "allow"})
+
+        too_large = self.model_record("x" * (GATE_MODULE.MAX_RESPONSE_BYTES + 1), step=3)
+        transcript = self.transcript(user, too_large)
+        self.assertEqual(self.grounded_stop(transcript), {"decision": "allow"})
+
+        too_many = self.model_record(
+            " ".join(
+                f"[source {index}](missing-{index}.py:1)"
+                for index in range(GATE_MODULE.MAX_CITATIONS + 1)
+            ),
+            step=3,
+        )
+        transcript = self.transcript(user, too_many)
+        self.assertEqual(self.grounded_stop(transcript)["decision"], "continue")
+
+    def test_grounding_fails_open_for_unsafe_or_unknown_transcript(self) -> None:
+        outside_dir = self.base / "outside"
+        outside_dir.mkdir()
+        outside_transcript = outside_dir / "transcript.jsonl"
+        outside_transcript.write_text(
+            json.dumps(self.model_record("[fake](missing.py:1)")) + "\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(
+            self.grounded_stop(outside_transcript),
+            {"decision": "allow"},
+        )
+
+        unknown = self.transcript({"role": "assistant", "content": "[fake](missing.py)"})
+        self.assertEqual(self.grounded_stop(unknown), {"decision": "allow"})
+
+        unknown.write_text("not-json\n", encoding="utf-8")
+        self.assertEqual(self.grounded_stop(unknown), {"decision": "allow"})
+
+        if os.name != "nt":
+            unknown.unlink()
+            unknown.symlink_to(outside_transcript)
+            self.assertEqual(self.grounded_stop(unknown), {"decision": "allow"})
+
+            unknown.unlink()
+            os.link(outside_transcript, unknown)
+            self.assertEqual(self.grounded_stop(unknown), {"decision": "allow"})
+
+    def test_grounding_fails_open_for_malformed_workspace_roots(self) -> None:
+        outside = self.base / "outside.py"
+        outside.write_text("secret = True\n", encoding="utf-8")
+        self.assertIsNone(
+            GATE_MODULE._citation_file_result(
+                str(outside),
+                1,
+                1,
+                {"workspacePaths": str(self.workspace)},
+            )
+        )
+
+        transcript = self.transcript(
+            self.user_record("Inspect the code."),
+            self.model_record(f"[outside]({outside}:1)"),
+        )
+        self.assertEqual(
+            self.grounded_stop(transcript, workspacePaths=str(self.workspace)),
+            {"decision": "allow"},
+        )
+
+    def test_grounding_and_verification_failures_are_combined(self) -> None:
+        self.write(target=self.workspace / "app.py")
+        transcript = self.transcript(
+            self.user_record("Fix the code."),
+            self.model_record("Changed [source](missing.py:1)."),
+        )
+
+        result = self.grounded_stop(transcript)
+
+        self.assertEqual(result["decision"], "continue")
+        self.assertIn("citation", result["reason"].casefold())
+        self.assertIn("behavioral", result["reason"].casefold())
+
     def test_no_write_allows_stop(self) -> None:
         self.assertEqual(self.stop(), {"decision": "allow"})
 

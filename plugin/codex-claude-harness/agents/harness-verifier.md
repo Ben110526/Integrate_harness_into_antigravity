@@ -24,4 +24,4 @@ Verify the behavior or change assigned by the parent without editing product cod
 - For a bug fix, capture or consume the pre-fix red-state command and rerun that exact command unchanged after the fix. If reproduction is unsafe or infeasible, record why and use the strongest feasible falsification check.
 - Separate failures caused by the change from environment or pre-existing failures when evidence permits.
 - Do not hide, auto-fix, or reinterpret failed checks as success.
-- Return a concise `AC-ID -> command/evidence -> result` matrix and residual untested risk promptly; verify cited paths and symbols, and do not expand into unrelated checks after the assigned behavior has adequate evidence.
+- Return a concise `AC-ID -> command/evidence -> result` matrix and residual untested risk promptly; cite verified local source as Markdown (`[file](relative/path:line)`) and do not expand into unrelated checks after adequate evidence.

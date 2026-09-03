@@ -4,7 +4,7 @@ Use first-party Antigravity as orchestrator/model client. Never extract or relay
 
 ## Always-on routing
 
-Apply this harness to every prompt; natural language is enough and `/harness-*` skills are optional. `lỗi`, `phát sinh`, `rủi ro`, `bảo mật`, `bug`, `regression`, `risk`, `review`, `security`, and `what can go wrong` signal review, but whole intent wins.
+Apply this harness to every prompt; `/harness-*` skills are optional. `lỗi`, `phát sinh`, `rủi ro`, `bảo mật`, `bug`, `regression`, `risk`, `review`, `security`, and `what can go wrong` signal review, but whole intent wins.
 
 - `DIRECT`: simple non-repository explanation; answer directly.
 - `RESEARCH`: non-trivial cross-file understanding/diagnosis; MUST invoke `harness-researcher`.
@@ -14,7 +14,7 @@ Apply this harness to every prompt; natural language is enough and `/harness-*` 
 
 Before any non-`DIRECT` inspection or tool call, invoke every route-required subagent via `invoke_subagent`; never do its role yourself first.
 
-File count is not complexity: keep mechanical/local edits on `IMPLEMENT`; promote for risks above or unresolved contracts. Source plus possible errors is `REVIEW_VERIFY`.
+File count is not complexity: keep local edits on `IMPLEMENT`; promote for risks above or unresolved contracts. Source plus possible errors is `REVIEW_VERIFY`.
 
 Specialists are conditional, not ceremonial:
 
@@ -24,7 +24,7 @@ Specialists are conditional, not ceremonial:
 
 `/harness-migration`, `/harness-adr`, and `/harness-benchmark` are optional; use repository conventions, rollback-ready slices, and comparable repeated baselines. They never replace correctness tests.
 
-Reviewer and verifier receive actual diff/contracts and acceptance criteria/checks, not implementer claims; parallel ownership does not overlap and stays read-only until findings return. On `REVIEW_VERIFY`, prioritize impact and run the narrowest safe reproduction/check independently.
+The reviewer/verifier pair receives the actual diff, contracts, and criteria—not implementer claims—and stays read-only and independent. On `REVIEW_VERIFY`, prioritize impact and the narrowest safe reproduction.
 
 Verification is bounded and non-recursive. Inside Antigravity, never launch `agy`, `doctor.sh`, `install.sh`, `install.ps1`, another installer, background task, or sandbox bypass unless installation testing was explicitly requested. Prefer local checks; disclose skipped nested checks and failed/unavailable subagent fallbacks. End each non-direct response with `Harness: <ROUTE>; passed: ...; failed/skipped: ...`. Ask only for an undiscoverable material product decision.
 
@@ -54,7 +54,7 @@ The plugin pre-registers namespaced MCP servers. Decide whether missing evidence
 4. Establish focused bug/regression failure before code changes when practical. Add/update the narrowest useful behavior test; use strong static checks for docs/mechanical/config work.
 5. For complex work, plan and delegate every independent bounded branch with `invoke_subagent(TypeName=..., Role=..., Workspace="inherit", Prompt=...)` first. Follow `COMPLEX_IMPLEMENT`; never self-review in place of independent review/verification. `send_message` is only for existing subagents.
 6. Use the smallest sufficient role and coherent root-cause fix; preserve conventions, unrelated changes, and public interfaces unless migration requires otherwise. Avoid false-success fallbacks.
-7. Run the decisive check, then wider tests/lint/types/build when useful. Report exact outcomes and residual risks; never claim success over failed/unrun required checks.
+7. Run the decisive check, then wider tests/lint/types/build when useful. Cite local source as `[label](relative/path:line)`; the Stop hook grounds explicit Markdown and `file://` links. Report outcomes and residual risks; never claim success over failed/unrun required checks.
 
 ## Tool, file, and safety discipline
 

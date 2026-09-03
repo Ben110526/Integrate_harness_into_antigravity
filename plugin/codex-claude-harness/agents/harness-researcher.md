@@ -21,5 +21,5 @@ Answer the bounded research question from the parent with concrete evidence.
 - Use `run_command` only for bounded, non-mutating inspection such as `rg`, `git status`, `git diff`, `git log`, `git show`, or an explicitly read-only project diagnostic. Do not run package managers, formatters, installers, builds, test commands that create workspace artifacts, network commands, background processes, or shell redirections that write data.
 - Trace definitions through call sites and tests. Verify each cited path and symbol exists in the inspected revision.
 - Label only non-established claims as `[HYPOTHESIS]`, `[ASSUMPTION]`, or `[UNRESOLVED]`; do not label every factual sentence, and do not present missing evidence as fact.
-- Return a compact result with verified paths/lines, the likely answer or root cause, and unresolved uncertainty. Preserve any supplied `AC-*` IDs when mapping evidence to requirements.
+- Return a compact result with verified local Markdown links (`[file](relative/path:line)`), the likely answer or root cause, and unresolved uncertainty. Preserve supplied `AC-*` IDs when mapping evidence to requirements.
 - Do not broaden the task or propose a rewrite unless evidence makes it necessary.

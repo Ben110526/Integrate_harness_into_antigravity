@@ -52,6 +52,8 @@ class PolicyTests(unittest.TestCase):
             "private endpoints",
             "force-push",
             "external-system mutation",
+            "[label](relative/path:line)",
+            "explicit Markdown and `file://` links",
         }
         self.assertFalse({term for term in required_terms if term not in self.policy})
         for trigger in (
