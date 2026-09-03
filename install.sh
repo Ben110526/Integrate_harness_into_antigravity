@@ -10,43 +10,62 @@ installer_path=""
 policy_temp_path=""
 github_mcp_temp_dir=""
 plugin_temp_dir=""
+profile_temp_dir=""
 agy_was_installed="true"
 github_mcp_status="skipped"
 github_mcp_version="1.10.1"
 mcp_enabled="true"
 skip_mcp="false"
 playwright_unrestricted="false"
-playwright_default_origins='http://localhost:*;http://127.0.0.1:*;https://localhost:*;https://127.0.0.1:*'
 playwright_extra_origins="${HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS:-}"
+playwright_mode="loopback"
+harness_config_path=""
+effective_mcp_config=""
+enabled_mcp_servers=""
 plugin_install_source="${plugin_dir}"
 mcp_failure_reason=""
 python_runtime=""
 
 usage() {
-  printf 'Usage: %s [--skip-mcp] [--playwright-unrestricted]\n' "${0##*/}"
+  printf 'Usage: %s [--config PATH] [--skip-mcp] [--playwright-unrestricted]\n' "${0##*/}"
+  printf '  --config PATH              Use an explicit strict v1 MCP install profile.\n'
   printf '  --skip-mcp                 Install the core harness without starting or registering MCP servers.\n'
   printf '  --playwright-unrestricted  Allow Playwright MCP to access all HTTP(S) origins.\n'
 }
 
-for argument in "$@"; do
-  case "${argument}" in
+while (( $# > 0 )); do
+  case "$1" in
+    --config)
+      if (( $# < 2 )) || [[ -z "$2" ]]; then
+        printf 'Error: --config requires a path.\n' >&2
+        exit 2
+      fi
+      harness_config_path="$2"
+      shift 2
+      ;;
     --skip-mcp)
       skip_mcp="true"
+      shift
       ;;
     --playwright-unrestricted)
       playwright_unrestricted="true"
+      shift
       ;;
     -h|--help)
       usage
       exit 0
       ;;
     *)
-      printf 'Error: unknown option: %s\n' "${argument}" >&2
+      printf 'Error: unknown option: %s\n' "$1" >&2
       usage >&2
       exit 2
       ;;
   esac
 done
+
+if [[ -z "${harness_config_path}" && -f "${package_root}/harness.config.json" ]]; then
+  harness_config_path="${package_root}/harness.config.json"
+fi
 
 if [[ "${HARNESS_SKIP_MCP_BOOTSTRAP:-0}" == "1" ]]; then
   skip_mcp="true"
@@ -74,6 +93,9 @@ cleanup() {
   if [[ -n "${plugin_temp_dir}" && -d "${plugin_temp_dir}" ]]; then
     rm -rf -- "${plugin_temp_dir}"
   fi
+  if [[ -n "${profile_temp_dir}" && -d "${profile_temp_dir}" ]]; then
+    rm -rf -- "${profile_temp_dir}"
+  fi
 }
 trap cleanup EXIT
 
@@ -84,31 +106,6 @@ fi
 
 if [[ ! -f "${policy_source}" ]]; then
   printf 'Error: global harness policy not found at %s\n' "${policy_source}" >&2
-  exit 1
-fi
-
-if [[ -z "${agy_executable}" ]]; then
-  agy_was_installed="false"
-  if ! command -v curl >/dev/null 2>&1; then
-    printf 'Error: curl is required to install Antigravity CLI.\n' >&2
-    exit 1
-  fi
-
-  printf 'Antigravity CLI is not installed; downloading the official installer...\n'
-  installer_path="$(mktemp "${TMPDIR:-/tmp}/agy-install.XXXXXX")"
-  curl -fsSL https://antigravity.google/cli/install.sh -o "${installer_path}"
-  bash "${installer_path}"
-
-  user_home="${HOME:?HOME is not set}"
-  if [[ -x "${user_home}/.local/bin/agy" ]]; then
-    agy_executable="${user_home}/.local/bin/agy"
-  else
-    agy_executable="$(command -v agy || true)"
-  fi
-fi
-
-if [[ -z "${agy_executable}" ]]; then
-  printf 'Error: agy was installed but is not available on PATH. Open a new shell and rerun this installer.\n' >&2
   exit 1
 fi
 
@@ -148,8 +145,6 @@ configure_optional_shell_paths() {
   fi
 }
 
-configure_optional_shell_paths
-
 resolve_python_runtime() {
   local name candidate resolved_runtime temp_root
   if ! temp_root="$(unset CDPATH; cd -- "${TMPDIR:-/tmp}" 2>/dev/null && pwd -P)"; then
@@ -181,29 +176,6 @@ if ! resolve_python_runtime; then
 fi
 
 install_github_mcp() {
-  local runtime
-  for runtime in node npx uvx; do
-    if ! command -v "${runtime}" >/dev/null 2>&1; then
-      mcp_failure_reason="missing runtime ${runtime}"
-      return 1
-    fi
-  done
-
-  local node_version node_major node_minor node_patch
-  node_version="$(node --version 2>/dev/null || true)"
-  node_version="${node_version#v}"
-  IFS=. read -r node_major node_minor node_patch <<< "${node_version}"
-  node_major="${node_major%%[^0-9]*}"
-  node_minor="${node_minor%%[^0-9]*}"
-  node_patch="${node_patch%%[^0-9]*}"
-  if [[ -z "${node_major}" || -z "${node_minor}" || -z "${node_patch}" ]] ||
-    (( 10#${node_major} < 20 )) ||
-    (( 10#${node_major} == 20 && 10#${node_minor} < 18 )) ||
-    (( 10#${node_major} == 20 && 10#${node_minor} == 18 && 10#${node_patch} < 1 )); then
-    mcp_failure_reason="Context7 requires Node.js 20.18.1 or newer; found ${node_version:-unknown}"
-    return 1
-  fi
-
   if ! command -v curl >/dev/null 2>&1; then
     mcp_failure_reason="curl is unavailable"
     return 1
@@ -293,6 +265,74 @@ install_github_mcp() {
   github_mcp_status="v${github_mcp_version} installed and verified"
 }
 
+mcp_server_enabled() {
+  local inventory=",$1,"
+  [[ "${inventory}" == *",$2,"* ]]
+}
+
+node_mcp_runtime_available() {
+  local node_version node_major node_minor node_patch
+  if ! command -v node >/dev/null 2>&1 || ! command -v npx >/dev/null 2>&1; then
+    mcp_failure_reason="Node.js and npx are required by enabled Node-based MCP servers"
+    return 1
+  fi
+  node_version="$(node --version 2>/dev/null || true)"
+  node_version="${node_version#v}"
+  IFS=. read -r node_major node_minor node_patch <<< "${node_version}"
+  node_major="${node_major%%[^0-9]*}"
+  node_minor="${node_minor%%[^0-9]*}"
+  node_patch="${node_patch%%[^0-9]*}"
+  if [[ -z "${node_major}" || -z "${node_minor}" || -z "${node_patch}" ]] ||
+    (( 10#${node_major} < 20 )) ||
+    (( 10#${node_major} == 20 && 10#${node_minor} < 18 )) ||
+    (( 10#${node_major} == 20 && 10#${node_minor} == 18 && 10#${node_patch} < 1 )); then
+    mcp_failure_reason="enabled Node-based MCP servers require Node.js 20.18.1 or newer; found ${node_version:-unknown}"
+    return 1
+  fi
+}
+
+render_mcp_profile() {
+  local output_path="$1"
+  shift
+  local server_name playwright_disabled="false"
+  local -a render_arguments
+  render_arguments=(
+    "${package_root}/scripts/render-mcp-config.js"
+    --input "${plugin_dir}/mcp_config.json"
+    --output "${output_path}"
+  )
+  if [[ -n "${harness_config_path}" ]]; then
+    render_arguments+=(--config "${harness_config_path}")
+  fi
+  for server_name in "$@"; do
+    if [[ "${server_name}" == "playwright" ]]; then
+      playwright_disabled="true"
+      break
+    fi
+  done
+  if [[ "${playwright_disabled}" != "true" && "${playwright_unrestricted}" == "true" ]]; then
+    render_arguments+=(--playwright-mode unrestricted)
+  elif [[ "${playwright_disabled}" != "true" && -n "${playwright_extra_origins}" ]]; then
+    render_arguments+=(--playwright-extra-origins "${playwright_extra_origins}")
+  fi
+  while (( $# > 0 )); do
+    render_arguments+=(--disable-server "$1")
+    shift
+  done
+
+  local profile_summary
+  if ! profile_summary="$(node "${render_arguments[@]}")"; then
+    return 1
+  fi
+  enabled_mcp_servers="$(printf '%s\n' "${profile_summary}" | sed -n 's/^mcp\.servers=//p')"
+  playwright_mode="$(printf '%s\n' "${profile_summary}" | sed -n 's/^playwright\.mode=//p')"
+  if [[ "$(printf '%s\n' "${profile_summary}" | grep -c '^mcp\.servers=')" != "1" ||
+    "$(printf '%s\n' "${profile_summary}" | grep -c '^playwright\.mode=')" != "1" ]]; then
+    printf 'Error: MCP profile renderer returned an invalid summary.\n' >&2
+    return 1
+  fi
+}
+
 validate_playwright_origins() {
   [[ -z "${playwright_extra_origins}" ]] && return 0
 
@@ -335,15 +375,9 @@ prepare_plugin_source() {
     rm -f -- "${plugin_install_source}/mcp_config.json"
     return
   fi
-
-  local playwright_mode="allowlist"
-  if [[ "${playwright_unrestricted}" == "true" ]]; then
-    playwright_mode="unrestricted"
-  fi
-  node "${package_root}/scripts/configure-playwright-mcp.js" \
-    "${plugin_install_source}/mcp_config.json" \
-    "${playwright_mode}" \
-    "${playwright_default_origins}${playwright_extra_origins:+;${playwright_extra_origins}}"
+  rm -f -- "${plugin_install_source}/mcp_config.json"
+  cp -- "${effective_mcp_config}" "${plugin_install_source}/mcp_config.json"
+  chmod 0600 "${plugin_install_source}/mcp_config.json"
 }
 
 if [[ "${skip_mcp}" == "true" ]]; then
@@ -351,11 +385,95 @@ if [[ "${skip_mcp}" == "true" ]]; then
   github_mcp_status="skipped; core-only plugin requested"
 elif ! validate_playwright_origins; then
   exit 2
-elif ! install_github_mcp; then
+elif ! command -v node >/dev/null 2>&1; then
+  if [[ -n "${harness_config_path}" ]]; then
+    printf 'Error: Node.js is required to validate the MCP install profile: %s\n' "${harness_config_path}" >&2
+    exit 2
+  fi
   mcp_enabled="false"
   github_mcp_status="unavailable; installed core-only harness"
-  printf '[warn] MCP bootstrap unavailable: %s. Continuing with the core harness only.\n' "${mcp_failure_reason}" >&2
-  printf '[warn] Fix the runtime/network issue and rerun ./install.sh to enable MCP.\n' >&2
+  printf '[warn] MCP bootstrap unavailable: Node.js is missing. Continuing with the core harness only.\n' >&2
+  printf '[warn] Install Node.js 20.18.1+ and rerun ./install.sh to enable MCP.\n' >&2
+else
+  profile_temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/harness-mcp-profile.XXXXXX")"
+  requested_mcp_config="${profile_temp_dir}/requested.json"
+  if ! render_mcp_profile "${requested_mcp_config}"; then
+    exit 2
+  fi
+  requested_mcp_servers="${enabled_mcp_servers}"
+  disabled_mcp_servers=()
+
+  if mcp_server_enabled "${requested_mcp_servers}" context7 ||
+    mcp_server_enabled "${requested_mcp_servers}" playwright; then
+    if ! node_mcp_runtime_available; then
+      mcp_server_enabled "${requested_mcp_servers}" context7 && disabled_mcp_servers+=(context7)
+      mcp_server_enabled "${requested_mcp_servers}" playwright && disabled_mcp_servers+=(playwright)
+      printf '[warn] %s; those MCP servers were omitted.\n' "${mcp_failure_reason}" >&2
+    fi
+  fi
+  if mcp_server_enabled "${requested_mcp_servers}" serena && ! command -v uvx >/dev/null 2>&1; then
+    disabled_mcp_servers+=(serena)
+    printf '[warn] Serena MCP was omitted because uvx is unavailable.\n' >&2
+  fi
+  if (( ${#disabled_mcp_servers[@]} > 0 )); then
+    effective_mcp_config="${profile_temp_dir}/effective.json"
+    if ! render_mcp_profile "${effective_mcp_config}" "${disabled_mcp_servers[@]}"; then
+      exit 2
+    fi
+  else
+    effective_mcp_config="${requested_mcp_config}"
+  fi
+  if [[ -z "${enabled_mcp_servers}" ]]; then
+    mcp_enabled="false"
+    [[ "${github_mcp_status}" != "skipped" ]] || github_mcp_status="disabled by install profile"
+  fi
+fi
+
+# Validate and plan the MCP inventory before any network download, upstream
+# installer execution, shell-profile update, plugin write, or policy write.
+if [[ -z "${agy_executable}" ]]; then
+  agy_was_installed="false"
+  if ! command -v curl >/dev/null 2>&1; then
+    printf 'Error: curl is required to install Antigravity CLI.\n' >&2
+    exit 1
+  fi
+
+  printf 'Antigravity CLI is not installed; downloading the official installer...\n'
+  installer_path="$(mktemp "${TMPDIR:-/tmp}/agy-install.XXXXXX")"
+  curl -fsSL https://antigravity.google/cli/install.sh -o "${installer_path}"
+  bash "${installer_path}"
+
+  user_home="${HOME:?HOME is not set}"
+  if [[ -x "${user_home}/.local/bin/agy" ]]; then
+    agy_executable="${user_home}/.local/bin/agy"
+  else
+    agy_executable="$(command -v agy || true)"
+  fi
+fi
+
+if [[ -z "${agy_executable}" ]]; then
+  printf 'Error: agy was installed but is not available on PATH. Open a new shell and rerun this installer.\n' >&2
+  exit 1
+fi
+
+configure_optional_shell_paths
+
+if [[ "${skip_mcp}" != "true" ]] && mcp_server_enabled "${enabled_mcp_servers}" github; then
+  if ! install_github_mcp; then
+    disabled_mcp_servers+=(github)
+    github_mcp_status="unavailable; GitHub MCP omitted"
+    printf '[warn] GitHub MCP bootstrap unavailable: %s. Continuing with independent MCP servers.\n' "${mcp_failure_reason}" >&2
+    effective_mcp_config="${profile_temp_dir}/effective-github.json"
+    if ! render_mcp_profile "${effective_mcp_config}" "${disabled_mcp_servers[@]}"; then
+      exit 2
+    fi
+  fi
+elif [[ "${skip_mcp}" != "true" ]]; then
+  github_mcp_status="disabled by effective configuration"
+fi
+
+if [[ -z "${enabled_mcp_servers}" ]]; then
+  mcp_enabled="false"
 fi
 
 prepare_plugin_source
@@ -462,7 +580,8 @@ if [[ -f "${plugin_dir}/hooks.json" ]]; then
   component_summary="${component_summary}, 4 lifecycle hooks"
 fi
 if [[ "${mcp_enabled}" == "true" ]]; then
-  component_summary="${component_summary}, 5 auto-routed MCP servers"
+  mcp_server_count="$(printf '%s' "${enabled_mcp_servers}" | awk -F, '{ print NF }')"
+  component_summary="${component_summary}, ${mcp_server_count} auto-routed MCP servers"
 else
   component_summary="${component_summary}, core-only (MCP disabled)"
 fi
@@ -481,21 +600,28 @@ fi
 printf 'Dung lượng plugin: %s\n' "${plugin_size}"
 printf 'Global policy   : %s\n' "${policy_target}"
 printf 'GitHub MCP      : %s\n' "${github_mcp_status}"
-if [[ "${mcp_enabled}" == "true" && "${playwright_unrestricted}" == "true" ]]; then
+if [[ "${mcp_enabled}" == "true" && "${playwright_mode}" == "unrestricted" ]]; then
   printf 'Playwright MCP  : unrestricted origins (explicit opt-in)\n'
-elif [[ "${mcp_enabled}" == "true" && -n "${playwright_extra_origins}" ]]; then
+elif [[ "${mcp_enabled}" == "true" && "${playwright_mode}" == "loopback-plus-allowlist" ]]; then
   printf 'Playwright MCP  : loopback plus custom origin allowlist\n'
+elif [[ "${mcp_enabled}" == "true" && "${playwright_mode}" == "allowlist" ]]; then
+  printf 'Playwright MCP  : exact custom origin allowlist\n'
+elif [[ "${mcp_enabled}" == "true" && "${playwright_mode}" == "disabled" ]]; then
+  printf 'Playwright MCP  : disabled by install profile\n'
 elif [[ "${mcp_enabled}" == "true" ]]; then
   printf 'Playwright MCP  : loopback origins only\n'
 else
   printf 'Playwright MCP  : disabled with MCP bootstrap\n'
+fi
+if [[ -n "${harness_config_path}" ]]; then
+  printf 'Install profile : %s\n' "${harness_config_path}"
 fi
 printf 'Tổng dung lượng  : %s\n' "${total_size}"
 printf 'Thành phần      : %s\n' "${component_summary}"
 printf 'Nguồn cài       : %s\n' "${package_root}"
 printf '============================================================\n'
 printf 'Dùng hằng ngày  : cd /duong/dan/project && agy\n'
-printf 'Model coding    : chọn Gemini 3.7 Flash High bằng /model (được lưu qua các phiên)\n'
+printf 'Model coding    : chọn Gemini 3.8 Flash High bằng /model (được lưu qua các phiên)\n'
 printf 'Lần chạy đầu có thể mở browser để đăng nhập Google.\n'
 if [[ "${agy_was_installed}" == "false" ]]; then
   printf 'Shell PATH      : bash/zsh và Fish/Nushell đã được cấu hình khi phát hiện shell tương ứng.\n'

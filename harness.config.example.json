@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "mcp": {
+    "servers": {
+      "context7": {
+        "enabled": true
+      },
+      "serena": {
+        "enabled": true
+      },
+      "playwright": {
+        "enabled": true,
+        "mode": "loopback",
+        "allowedOrigins": []
+      },
+      "github": {
+        "enabled": true
+      },
+      "sentry": {
+        "enabled": true
+      }
+    }
+  }
+}

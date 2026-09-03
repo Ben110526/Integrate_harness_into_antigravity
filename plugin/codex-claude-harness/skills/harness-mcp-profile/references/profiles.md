@@ -1,6 +1,6 @@
 # Automatic MCP for the coding harness
 
-The installer pre-registers five servers with the `harness-` prefix. Antigravity loads them with the plugin at session startup; the model selects a server based on the evidence gap instead of asking the user to copy or merge configuration. Templates in `../assets/` are always disabled and serve only as validation and rollback sources.
+The installer registers the enabled, available subset of five servers with the `harness-` prefix. Antigravity loads that effective inventory with the plugin at session startup; the model selects a server based on the evidence gap instead of asking the user to choose one per task. Templates in `../assets/` are always disabled and serve only as validation and rollback sources.
 
 ## Routing rules
 
@@ -16,7 +16,7 @@ The model must start with one server and add another only when it provides a dis
 
 ## Installation and lifecycle
 
-`plugin/codex-claude-harness/mcp_config.json` is the runtime configuration. Antigravity discovers this plugin layout at startup. Because the raw configuration has no hot-reload contract, the installer configures everything before a working session instead of allowing the model to edit the configuration during a task.
+`plugin/codex-claude-harness/mcp_config.json` is the canonical, safety-pinned renderer input. The installer validates an optional strict `harness.config.json` profile, removes disabled or unavailable servers, and places the rendered effective configuration in the installed plugin. Antigravity discovers that installed plugin layout at startup. Because there is no guaranteed hot-reload contract, configuration changes require reinstallation and a new session instead of allowing the model to edit this file during a coding task.
 
 - Context7 is pinned to `@upstash/context7-mcp@4.0.3`, and Playwright is pinned to `@playwright/mcp@0.0.79`; `npx -y` retrieves the exact package when the server starts for the first time.
 - Serena uses `uvx --from serena-agent==1.7.0` with its dashboard UI disabled, so it requires neither `uv tool install` nor manual server setup. Because Antigravity does not pass a working directory to Serena, the model uses the server only when the repository already contains `.serena/project.yml`, then calls `activate_project` before the first query. In an uninitialized repository, Serena v1.7 may create workspace metadata during activation; the model must fall back to `rg`, a language server, or the compiler unless the user has authorized that change.
@@ -42,9 +42,9 @@ Example exact allowlist:
 HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS='https://preview.example.com;https://staging.example.com:8443' ./install.sh
 ```
 
-The exact-origin mode retains the loopback defaults and rejects wildcards, credentials, paths, queries, and fragments. Unrestricted mode removes the origin filter but retains `--isolated`, `--headless`, and Antigravity's Ask permission. It cannot be combined with `--skip-mcp` or `HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS`. Rerun the installer without a network option to restore loopback-only behavior, start a new `agy` session after changing modes, and treat all external page content as untrusted.
+The legacy exact-origin environment override retains the loopback defaults and rejects wildcards, credentials, paths, queries, and fragments. A profile `allowlist` uses exactly its listed origins. Unrestricted mode removes the origin filter but retains `--isolated`, `--headless`, and Antigravity's Ask permission. It cannot be combined with `--skip-mcp` or `HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS`. To restore loopback-only behavior, clear that environment variable, set any active profile to `mode: "loopback"` with `allowedOrigins: []` (or remove it), rerun without the unrestricted flag, and start a new session. Treat all external page content as untrusted.
 
-`./install.sh --skip-mcp` and `.\install.ps1 -SkipMcp` install the core-only harness without a root `mcp_config.json`. This is also the automatic fallback when Node/uvx is unavailable, a proxy or rate limit blocks the GitHub download, the checksum does not match, or the binary cannot be installed; no broken server is registered. Resolve the condition and rerun the installer normally to restore all five MCP servers.
+`./install.sh --skip-mcp` and `.\install.ps1 -SkipMcp` install the core-only harness without a root `mcp_config.json`. Otherwise, an unavailable dependency removes only its affected server or servers where possible: Node/npx affects Context7 and Playwright, `uvx` affects Serena, and GitHub download or checksum failures affect GitHub. Independent available servers remain registered. Resolve the condition and rerun the installer to restore the servers enabled by the active profile.
 
 ## Guardrails
 

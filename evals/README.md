@@ -10,11 +10,11 @@ Run them after installing the current plugin:
 ./evals/run-smoke.sh
 ```
 
-The runner pins `gemini-3.7-flash-high` by default. Override it only when
+The runner pins `gemini-3.8-flash-high` by default. Override it only when
 comparing model profiles:
 
 ```bash
-HARNESS_EVAL_MODEL=gemini-3.7-flash-medium ./evals/run-smoke.sh
+HARNESS_EVAL_MODEL=gemini-3.8-flash-medium ./evals/run-smoke.sh
 ```
 
 Run one case while diagnosing an eval failure:
@@ -85,7 +85,7 @@ python3 evals/quota_benchmark.py \
   --case local-lookup-existing-symbol \
   --case review-only-conceptual \
   --repeat 3 \
-  --model gemini-3.7-flash-high \
+  --model gemini-3.8-flash-high \
   --confirm-quota-use > benchmark.ndjson
 ```
 

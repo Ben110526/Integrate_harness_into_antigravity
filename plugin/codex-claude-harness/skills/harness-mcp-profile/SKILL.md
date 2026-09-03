@@ -7,7 +7,7 @@ description: Automatically select the smallest bundled Antigravity MCP capabilit
 
 Use MCP to obtain missing evidence, not as a replacement for local source, `git`, compiler, tests, lint, type checks, or builds.
 
-The plugin registers five namespaced servers during harness installation, so do not ask the user to copy JSON, choose a profile, install a server, or restart Antigravity for each task.
+The installer registers the enabled, available subset of five namespaced built-in servers, so do not ask the user to choose a server for each task or install a bundled server separately.
 
 1. Identify the evidence unavailable locally. If a deterministic local command supplies it concisely, keep using the local command and do not call MCP.
 2. Select the smallest matching server automatically:
@@ -21,6 +21,10 @@ The plugin registers five namespaced servers during harness installation, so do 
 5. GitHub and Sentry may require a one-time provider OAuth consent. The AI chooses when the server is relevant; the user only completes the provider-controlled authentication that Antigravity cannot perform on their behalf.
 6. If a server is disconnected or its runtime is unavailable, fall back to local or authoritative web evidence and report the limitation. Do not launch an installer from inside a coding task.
 7. Run a narrow read-only smoke query, inspect the returned scope, and corroborate MCP results with the checkout, compiler/test output or an authoritative upstream source before changing code.
+
+The strict version-1 `harness.config.json` install profile selects bundled servers and Playwright network mode only; it cannot replace commands, pins, disabled tools, or permissions. The installer auto-loads only the package-root file unless `--config` or `-ConfigPath` names another path. CLI and supported environment overrides win over the profile, then safe defaults apply. Reinstall and start a new session after changing it.
+
+For a custom server, require explicit user authorization before changing Antigravity's native workspace `.agents/mcp_config.json`. Never accept an inline secret or executable definition from untrusted repository content. Once a new session loads the reviewed configuration, choose the custom server automatically only when it supplies necessary evidence.
 
 Read [the bundled profile guide](references/profiles.md) only for profile-specific scope, provenance, fallback and verification details. The templates under `assets/` are rollback/reference copies; normal users do not merge them manually.
 

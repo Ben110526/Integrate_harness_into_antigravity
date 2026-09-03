@@ -9,7 +9,7 @@ User
    │
    ▼
 official agy / Antigravity
-   ├── Gemini 3.7 Flash High through Google AI Pro quota
+   ├── Gemini 3.8 Flash High through Google AI Pro quota
    ├── AGENTS.md + rules
    ├── skills/workflows
    ├── 7 subagents routed by risk
@@ -50,7 +50,7 @@ Beyond the terms issue, the harnesses do not use the same wire protocol:
 - Dirty-worktree protection, minimum-diff discipline, and destructive-action safety.
 - Targeted tests first, followed by broader validation.
 - Headless JSON/stream-json for CI and automation, as documented by Google.
-- Smoke evals can pin `gemini-3.7-flash-high` to compare routing changes under the same model profile.
+- Smoke evals can pin `gemini-3.8-flash-high` to compare routing changes under the same model profile.
 
 ## Accuracy Pipeline
 
@@ -118,11 +118,13 @@ tiers do not expose a per-agent reasoning-effort field.
 
 Smoke evals exercise both sides of the evidence contract. A read-only nonexistent-symbol case requires an exact `NOT_FOUND` result and forbids claims of a definition, location, or file mutation. The complex fixture declares independently named acceptance criteria and runs each targeted check as well as the full suite. These are behavioral signals; the headless JSON envelope still cannot prove exact subagent scheduling order.
 
-Context7, Serena, Playwright, GitHub, and Sentry are registered through `plugin/codex-claude-harness/mcp_config.json`, so Antigravity loads them with the plugin at the start of a session and the model decides which server is worth calling. Server names use the `harness-` prefix to prevent collisions with global or workspace configuration. The `disabled` templates in the skill are reference and rollback copies only; they are no longer a manual installation step.
+`plugin/codex-claude-harness/mcp_config.json` is the canonical safety-pinned input for Context7, Serena, Playwright, GitHub, and Sentry. The installer renders the enabled, available subset into the installed plugin, so Antigravity loads that effective inventory at the start of a session and the model decides which server is worth calling. Server names use the `harness-` prefix to prevent collisions with global or workspace configuration. The `disabled` templates in the skill are reference and rollback copies only; they are no longer a manual installation step.
 
 Context7 and Playwright use packages pinned through `npx`; Serena uses a package pinned through `uvx`; GitHub uses a release binary pinned by version and verified by OS/architecture-specific checksums; and Sentry uses its official remote endpoint with the `skills=inspect` capability allowlist. GitHub exposes only read-only/lockdown mode; Serena disables mutation tools; and Sentry additionally disables `update_issue`, Seer analysis, and the catalog executor as defense in depth so catalog mutations cannot bypass the wrapper. MCP permissions remain set to Ask. The harness adds no wildcard allow rule, embeds no credentials, and leaves the user to complete the provider's standard OAuth flow when required.
 
-The installer registers the five MCP servers only when all required runtimes and the GitHub MCP binary are ready. `--skip-mcp`, or a recoverable bootstrap failure, produces a core-only plugin without a root `mcp_config.json`, preventing a missing server command from breaking the session. Playwright remains loopback-only by default. Exact staging origins are added only to the installed plugin when the user supplies `HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS`; wildcards, paths, and credentials are all rejected. On a trusted personal development machine, `--playwright-unrestricted` (or PowerShell `-PlaywrightUnrestricted`) removes the origin filter from the temporary installation copy while retaining isolated/headless operation and Antigravity's Ask permission.
+The strict version-1 install profile selects only the five bundled servers and cannot override their commands or safety arguments. The installer auto-loads `harness.config.json` only at the package root unless `--config` or `-ConfigPath` names another file; CLI and environment overrides take precedence, then the profile, then safe defaults. Missing optional runtimes omit affected servers while retaining independent available servers when possible. Configuration changes require reinstallation and a new session. Custom servers require explicit user authorization and Antigravity's native workspace `.agents/mcp_config.json`; never adopt inline secrets or executable definitions from untrusted repository content.
+
+Shared mutable blackboard files are deferred because stale or injected summaries would weaken independent review without measured savings. Raw transcript or chain-of-thought export is also deferred; use Antigravity's supported `/agents` view. Docker remains an explicit future option rather than a default because bind mounts can modify host files and socket access is privileged.
 
 Relevant Antigravity documentation:
 

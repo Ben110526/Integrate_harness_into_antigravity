@@ -1,4 +1,7 @@
 ﻿param(
+    [Alias("config")]
+    [string]$ConfigPath,
+
     [Alias("skip-mcp")]
     [switch]$SkipMcp,
 
@@ -13,17 +16,33 @@ $packageRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $pluginDir = Join-Path $packageRoot "plugin/codex-claude-harness"
 $manifestPath = Join-Path $pluginDir "plugin.json"
 $policySource = Join-Path $packageRoot "global/GEMINI.md"
+$canonicalMcpConfig = Join-Path $pluginDir "mcp_config.json"
+$mcpRenderer = Join-Path $packageRoot "scripts/render-mcp-config.js"
 $githubMcpVersion = "1.10.1"
 $githubMcpStatus = "skipped"
-$mcpEnabled = $true
-$playwrightDefaultOrigins = "http://localhost:*;http://127.0.0.1:*;https://localhost:*;https://127.0.0.1:*"
+$mcpEnabled = $false
 $playwrightExtraOrigins = $env:HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS
+$playwrightMode = "disabled"
+$enabledMcpServers = @()
+$disabledMcpServers = @()
+$effectiveMcpConfig = $null
+$profileTemporaryDirectory = $null
 $pluginInstallSource = $pluginDir
 $pluginTemporaryDirectory = $null
 $pythonRuntime = $null
 
 if ($env:HARNESS_SKIP_MCP_BOOTSTRAP -eq "1") {
     $SkipMcp = $true
+}
+
+if (-not $PSBoundParameters.ContainsKey("ConfigPath")) {
+    $automaticConfigPath = Join-Path $packageRoot "harness.config.json"
+    if (Test-Path $automaticConfigPath -PathType Leaf) {
+        $ConfigPath = $automaticConfigPath
+    }
+}
+elseif ([string]::IsNullOrWhiteSpace($ConfigPath)) {
+    throw "-ConfigPath requires a non-empty path."
 }
 
 if ($SkipMcp -and $PlaywrightUnrestricted) {
@@ -40,24 +59,12 @@ if (-not (Test-Path $manifestPath -PathType Leaf)) {
 if (-not (Test-Path $policySource -PathType Leaf)) {
     throw "Global harness policy not found at $policySource"
 }
-
-$agyCommand = Get-Command agy -ErrorAction SilentlyContinue
-$agyWasInstalled = $null -ne $agyCommand
-if (-not $agyCommand) {
-    Write-Host "Antigravity CLI is not installed; running the official installer..."
-    $installer = Invoke-RestMethod "https://antigravity.google/cli/install.ps1"
-    & ([scriptblock]::Create($installer))
-
-    $agyBin = Join-Path $env:LOCALAPPDATA "agy/bin"
-    $env:PATH = "$agyBin;$env:PATH"
-    $agyCommand = Get-Command agy -ErrorAction SilentlyContinue
+if (-not (Test-Path $canonicalMcpConfig -PathType Leaf)) {
+    throw "Canonical MCP configuration not found at $canonicalMcpConfig"
 }
-
-if (-not $agyCommand) {
-    throw "agy was installed but is not available on PATH. Open a new terminal and rerun this installer."
+if (-not (Test-Path $mcpRenderer -PathType Leaf)) {
+    throw "MCP configuration renderer not found at $mcpRenderer"
 }
-
-$agyExecutable = $agyCommand.Source
 
 function Test-HarnessTrustedPythonRuntime([string] $Path) {
     if (-not [System.IO.Path]::IsPathRooted($Path) -or -not (Test-Path $Path -PathType Leaf)) {
@@ -97,17 +104,6 @@ if (-not $pythonRuntime) {
 }
 
 function Install-HarnessGitHubMcp {
-    foreach ($runtime in @("node", "npx", "uvx")) {
-        if (-not (Get-Command $runtime -ErrorAction SilentlyContinue)) {
-            throw "Automatic MCP setup requires $runtime. Install Node.js 20.18.1+ (with npx) and uv (with uvx), then rerun install.ps1."
-        }
-    }
-    $nodeVersionText = (& node --version).Trim().TrimStart("v")
-    $nodeVersion = $null
-    if (-not [System.Version]::TryParse($nodeVersionText, [ref]$nodeVersion) -or $nodeVersion -lt [System.Version]"20.18.1") {
-        throw "Context7 requires Node.js 20.18.1 or newer; found $nodeVersionText."
-    }
-
     $architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
     switch ($architecture) {
         "Arm64" {
@@ -179,26 +175,81 @@ function Install-HarnessGitHubMcp {
     }
 }
 
-function Test-HarnessPlaywrightOriginList([string] $Origins) {
-    if ([string]::IsNullOrEmpty($Origins)) {
-        return
+function Invoke-HarnessMcpRenderer {
+    if (-not $script:profileTemporaryDirectory) {
+        $script:profileTemporaryDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("codex-harness-profile-" + [System.Guid]::NewGuid())
+        New-Item -ItemType Directory -Path $script:profileTemporaryDirectory | Out-Null
     }
 
-    foreach ($origin in $Origins.Split(";")) {
-        $uri = $null
-        $validUri = [System.Uri]::TryCreate($origin, [System.UriKind]::Absolute, [ref]$uri)
-        if (
-            [string]::IsNullOrEmpty($origin) -or
-            $origin.Contains("*") -or
-            -not $validUri -or
-            $uri.Scheme -notin @("http", "https") -or
-            -not [string]::IsNullOrEmpty($uri.UserInfo) -or
-            $uri.AbsolutePath -ne "/" -or
-            -not [string]::IsNullOrEmpty($uri.Query) -or
-            -not [string]::IsNullOrEmpty($uri.Fragment)
-        ) {
-            throw "HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS must be a semicolon-separated list of exact HTTP(S) origins without paths, credentials, or wildcards; invalid value: $origin"
+    $renderedPath = Join-Path $script:profileTemporaryDirectory ("mcp-config-" + [System.Guid]::NewGuid() + ".json")
+    $rendererArguments = @(
+        $script:mcpRenderer,
+        "--input", $script:canonicalMcpConfig,
+        "--output", $renderedPath
+    )
+    if (-not [string]::IsNullOrEmpty($script:ConfigPath)) {
+        $rendererArguments += @("--config", $script:ConfigPath)
+    }
+    foreach ($serverName in $script:disabledMcpServers) {
+        $rendererArguments += @("--disable-server", $serverName)
+    }
+    $playwrightDisabled = $script:disabledMcpServers -contains "playwright"
+    if ($script:PlaywrightUnrestricted -and -not $playwrightDisabled) {
+        $rendererArguments += @("--playwright-mode", "unrestricted")
+    }
+    elseif (-not $playwrightDisabled -and -not [string]::IsNullOrEmpty($script:playwrightExtraOrigins)) {
+        $rendererArguments += @("--playwright-extra-origins", $script:playwrightExtraOrigins)
+    }
+
+    $priorErrorActionPreference = $ErrorActionPreference
+    try {
+        # Windows PowerShell 5.1 promotes native stderr to NativeCommandError.
+        # Capture renderer diagnostics and use its exit code as the contract.
+        $ErrorActionPreference = "Continue"
+        $rendererOutput = (& $script:nodeExecutable @rendererArguments 2>&1 | Out-String)
+        $rendererStatus = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $priorErrorActionPreference
+    }
+    if ($rendererStatus -ne 0) {
+        if (Test-Path $renderedPath -PathType Leaf) {
+            Remove-Item $renderedPath -Force
         }
+        $diagnostic = $rendererOutput.Trim()
+        if ([string]::IsNullOrEmpty($diagnostic)) {
+            $diagnostic = "renderer exited with status $rendererStatus"
+        }
+        throw "MCP configuration validation failed: $diagnostic"
+    }
+
+    if ($script:effectiveMcpConfig -and (Test-Path $script:effectiveMcpConfig -PathType Leaf)) {
+        Remove-Item $script:effectiveMcpConfig -Force
+    }
+    $script:effectiveMcpConfig = $renderedPath
+    $rendered = Get-Content $renderedPath -Raw | ConvertFrom-Json
+    $runtimeNames = @($rendered.mcpServers.PSObject.Properties | ForEach-Object { $_.Name })
+    $script:enabledMcpServers = @($runtimeNames | ForEach-Object { $_ -replace '^harness-', '' })
+    $script:mcpEnabled = $script:enabledMcpServers.Count -gt 0
+    $script:playwrightMode = "disabled"
+    foreach ($line in ($rendererOutput -split "`r?`n")) {
+        if ($line.StartsWith("playwright.mode=")) {
+            $script:playwrightMode = $line.Substring("playwright.mode=".Length)
+        }
+    }
+}
+
+function Disable-HarnessMcpServers([string[]] $ServerNames, [string] $Reason) {
+    $newlyDisabled = @()
+    foreach ($serverName in $ServerNames) {
+        if (($script:enabledMcpServers -contains $serverName) -and ($script:disabledMcpServers -notcontains $serverName)) {
+            $script:disabledMcpServers += $serverName
+            $newlyDisabled += $serverName
+        }
+    }
+    if ($newlyDisabled.Count -gt 0) {
+        Write-Warning "MCP server(s) $($newlyDisabled -join ', ') disabled: $Reason"
+        Invoke-HarnessMcpRenderer
     }
 }
 
@@ -223,32 +274,73 @@ function Resolve-HarnessPluginInstallSource {
         return
     }
 
-    $playwrightMode = if ($script:PlaywrightUnrestricted) { "unrestricted" } else { "allowlist" }
-    $origins = $script:playwrightDefaultOrigins
-    if (-not [string]::IsNullOrEmpty($script:playwrightExtraOrigins)) {
-        $origins += ";$script:playwrightExtraOrigins"
-    }
-    & node (Join-Path $script:packageRoot "scripts/configure-playwright-mcp.js") $mcpConfigPath $playwrightMode $origins
-    if ($LASTEXITCODE -ne 0) {
-        throw "Playwright MCP origin configuration failed."
-    }
+    Copy-Item -LiteralPath $script:effectiveMcpConfig -Destination $mcpConfigPath -Force
 }
 
 if ($SkipMcp) {
-    $mcpEnabled = $false
     $githubMcpStatus = "skipped; core-only plugin requested"
 }
 else {
-    Test-HarnessPlaywrightOriginList $playwrightExtraOrigins
+    $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
+    if (-not $nodeCommand) {
+        if (-not [string]::IsNullOrEmpty($ConfigPath)) {
+            throw "Node.js is required to validate the harness configuration at $ConfigPath."
+        }
+        Write-Warning "Node.js was not found, so MCP configuration cannot be rendered. Continuing with the core-only harness."
+        Write-Warning "Install Node.js 20.18.1+ (with npx) and rerun install.ps1 to enable MCP."
+    }
+    else {
+        $nodeExecutable = $nodeCommand.Source
+        Invoke-HarnessMcpRenderer
+
+        if (($enabledMcpServers -contains "context7") -or ($enabledMcpServers -contains "playwright")) {
+            $nodeVersionText = (& $nodeExecutable --version).Trim().TrimStart("v")
+            $nodeVersion = $null
+            $nodeVersionValid = [System.Version]::TryParse($nodeVersionText, [ref]$nodeVersion) -and $nodeVersion -ge [System.Version]"20.18.1"
+            if (-not $nodeVersionValid) {
+                Disable-HarnessMcpServers @("context7", "playwright") "Node.js 20.18.1+ is required; found $nodeVersionText"
+            }
+            elseif (-not (Get-Command npx -ErrorAction SilentlyContinue)) {
+                Disable-HarnessMcpServers @("context7", "playwright") "npx is unavailable"
+            }
+        }
+        if (($enabledMcpServers -contains "serena") -and -not (Get-Command uvx -ErrorAction SilentlyContinue)) {
+            Disable-HarnessMcpServers @("serena") "uvx is unavailable"
+        }
+    }
+}
+
+# Configuration is rendered and validated before the installer can download or
+# write the Antigravity CLI, GitHub MCP binary, plugin, or global policy.
+$agyCommand = Get-Command agy -ErrorAction SilentlyContinue
+$agyWasInstalled = $null -ne $agyCommand
+if (-not $agyCommand) {
+    Write-Host "Antigravity CLI is not installed; running the official installer..."
+    $installer = Invoke-RestMethod "https://antigravity.google/cli/install.ps1"
+    & ([scriptblock]::Create($installer))
+
+    $agyBin = Join-Path $env:LOCALAPPDATA "agy/bin"
+    $env:PATH = "$agyBin;$env:PATH"
+    $agyCommand = Get-Command agy -ErrorAction SilentlyContinue
+}
+
+if (-not $agyCommand) {
+    throw "agy was installed but is not available on PATH. Open a new terminal and rerun this installer."
+}
+
+$agyExecutable = $agyCommand.Source
+
+if ($enabledMcpServers -contains "github") {
     try {
         Install-HarnessGitHubMcp
     }
     catch {
-        $mcpEnabled = $false
-        $githubMcpStatus = "unavailable; installed core-only harness"
-        Write-Warning "MCP bootstrap unavailable: $($_.Exception.Message). Continuing with the core harness only."
-        Write-Warning "Fix the runtime/network issue and rerun install.ps1 to enable MCP."
+        $githubMcpStatus = "unavailable; GitHub MCP disabled"
+        Disable-HarnessMcpServers @("github") $_.Exception.Message
     }
+}
+elseif (-not $SkipMcp) {
+    $githubMcpStatus = "disabled by effective configuration"
 }
 
 try {
@@ -269,6 +361,9 @@ try {
 finally {
     if ($pluginTemporaryDirectory -and (Test-Path $pluginTemporaryDirectory -PathType Container)) {
         Remove-Item -Recurse -Force $pluginTemporaryDirectory
+    }
+    if ($profileTemporaryDirectory -and (Test-Path $profileTemporaryDirectory -PathType Container)) {
+        Remove-Item -Recurse -Force $profileTemporaryDirectory
     }
 }
 
@@ -368,7 +463,7 @@ if (Test-Path (Join-Path $pluginDir "hooks.json") -PathType Leaf) {
     $componentSummary += ", 4 lifecycle hooks"
 }
 if ($mcpEnabled) {
-    $componentSummary += ", 5 auto-routed MCP servers"
+    $componentSummary += ", $($enabledMcpServers.Count) auto-routed MCP servers"
 }
 else {
     $componentSummary += ", core-only (MCP disabled)"
@@ -389,22 +484,25 @@ if ($pluginInstallDir) {
 Write-Host "Dung lượng plugin: $pluginSize"
 Write-Host "Global policy    : $policyTarget"
 Write-Host "GitHub MCP       : $githubMcpStatus"
-if ($mcpEnabled -and $PlaywrightUnrestricted) {
+if ($mcpEnabled -and $playwrightMode -eq "unrestricted") {
     Write-Host "Playwright MCP   : unrestricted origins (explicit opt-in)"
 }
-elseif ($mcpEnabled -and -not [string]::IsNullOrEmpty($playwrightExtraOrigins)) {
+elseif ($mcpEnabled -and $playwrightMode -eq "allowlist") {
+    Write-Host "Playwright MCP   : exact custom origin allowlist"
+}
+elseif ($mcpEnabled -and $playwrightMode -eq "loopback-plus-allowlist") {
     Write-Host "Playwright MCP   : loopback plus custom origin allowlist"
 }
-elseif ($mcpEnabled) {
+elseif ($mcpEnabled -and $playwrightMode -eq "loopback") {
     Write-Host "Playwright MCP   : loopback origins only"
 }
 else {
-    Write-Host "Playwright MCP   : disabled with MCP bootstrap"
+    Write-Host "Playwright MCP   : disabled"
 }
 Write-Host "Tổng dung lượng  : $totalSize"
 Write-Host "Thành phần       : $componentSummary"
 Write-Host "Nguồn cài        : $packageRoot"
 Write-Host "============================================================"
 Write-Host "Dùng hằng ngày   : cd C:\duong\dan\project; agy"
-Write-Host "Model coding     : chọn Gemini 3.7 Flash High bằng /model (được lưu qua các phiên)"
+Write-Host "Model coding     : chọn Gemini 3.8 Flash High bằng /model (được lưu qua các phiên)"
 Write-Host "Lần chạy đầu có thể mở browser để đăng nhập Google."

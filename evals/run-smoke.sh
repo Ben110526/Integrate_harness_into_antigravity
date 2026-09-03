@@ -3,7 +3,7 @@
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-model="${HARNESS_EVAL_MODEL:-gemini-3.7-flash-high}"
+model="${HARNESS_EVAL_MODEL:-gemini-3.8-flash-high}"
 case_filter="${HARNESS_EVAL_CASE:-}"
 cases_path="${repo_root}/evals/cases.json"
 max_continuations=3

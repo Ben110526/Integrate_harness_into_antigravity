@@ -26,6 +26,11 @@ bash -n "${shell_files[@]}"
 printf '[check] eval, policy, and lifecycle fixture coverage\n'
 python3 -m unittest -q tests/test_evals.py tests/test_policy.py tests/test_lifecycle_guard.py
 
+printf '[check] strict MCP profile renderer\n'
+command -v node >/dev/null 2>&1 || fail 'Node.js is required for MCP profile renderer checks'
+node --check scripts/render-mcp-config.js
+node --test tests/test-render-mcp-config.js
+
 printf '[check] plugin JSON and frontmatter inventory\n'
 python3 - "${repo_root}" <<'PY'
 import json
@@ -34,7 +39,11 @@ import re
 import sys
 
 root = pathlib.Path(sys.argv[1])
-json_paths = [root / "plugin/codex-claude-harness/plugin.json"]
+json_paths = [
+    root / "plugin/codex-claude-harness/plugin.json",
+    root / "harness.config.example.json",
+    root / "schemas/harness.config.schema.json",
+]
 json_paths.extend(sorted((root / "plugin/codex-claude-harness").glob("*.json")))
 profile_paths = sorted(root.glob("plugin/codex-claude-harness/skills/*/assets/*.json"))
 json_paths.extend(profile_paths)
@@ -188,6 +197,10 @@ if "--playwright-unrestricted" not in install_sh or "PlaywrightUnrestricted" not
     raise SystemExit("installers must expose an explicit unrestricted Playwright opt-in")
 if "HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS" not in install_sh or "HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS" not in install_ps1:
     raise SystemExit("installers must support a validated Playwright staging-origin allowlist")
+if "scripts/render-mcp-config.js" not in install_sh or "scripts/render-mcp-config.js" not in install_ps1:
+    raise SystemExit("installers must render the strict MCP profile through the shared validator")
+if "--config" not in install_sh or "ConfigPath" not in install_ps1:
+    raise SystemExit("installers must expose the versioned MCP install profile")
 if "core-only" not in install_sh or "core-only" not in install_ps1:
     raise SystemExit("installers must report graceful core-only MCP fallback")
 for source in (install_sh, install_ps1):
@@ -301,11 +314,40 @@ printf '# Existing user rule\n\n- Keep this line.\n' > "${fake_home}/.gemini/GEM
 cat > "${fake_bin}/agy" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ -n "${AGY_CALL_MARKER:-}" ]]; then
+  : > "${AGY_CALL_MARKER}"
+fi
 case "${1:-}" in
   plugin)
     if [[ "${EXPECT_CORE_ONLY:-0}" == "1" && -f "${3:-}/mcp_config.json" ]]; then
       printf 'core-only fixture received an enabled mcp_config.json\n' >&2
       exit 9
+    fi
+    if [[ -n "${EXPECT_MCP_SERVERS:-}" ]]; then
+      python3 - "${3:-}" "${EXPECT_MCP_SERVERS}" <<'PY'
+import json
+import pathlib
+import sys
+
+config = json.loads((pathlib.Path(sys.argv[1]) / "mcp_config.json").read_text(encoding="utf-8"))
+actual = sorted(config["mcpServers"])
+expected = sorted(filter(None, sys.argv[2].split(",")))
+if actual != expected:
+    raise SystemExit(f"unexpected installed MCP inventory: {actual}; expected {expected}")
+PY
+    fi
+    if [[ -n "${EXPECT_PLAYWRIGHT_EXACT_ORIGINS:-}" ]]; then
+      python3 - "${3:-}" "${EXPECT_PLAYWRIGHT_EXACT_ORIGINS}" <<'PY'
+import json
+import pathlib
+import sys
+
+config = json.loads((pathlib.Path(sys.argv[1]) / "mcp_config.json").read_text(encoding="utf-8"))
+args = config["mcpServers"]["harness-playwright"]["args"]
+actual = args[args.index("--allowed-origins") + 1]
+if actual != sys.argv[2]:
+    raise SystemExit(f"unexpected exact Playwright origins: {actual}")
+PY
     fi
     if [[ -n "${EXPECT_PLAYWRIGHT_ORIGIN:-}" ]]; then
       python3 - "${3:-}" "${EXPECT_PLAYWRIGHT_ORIGIN}" <<'PY'
@@ -409,17 +451,47 @@ old_node_bin="${test_root}/old-node-bin"
 mkdir -p -- "${old_node_bin}"
 cat > "${old_node_bin}/node" <<'SH'
 #!/usr/bin/env bash
-printf 'v19.0.0\n'
+set -euo pipefail
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'v19.0.0\n'
+  exit 0
+fi
+if [[ "${1:-}" == */scripts/render-mcp-config.js ]]; then
+  exec "${HARNESS_TEST_REAL_NODE:?}" "$@"
+fi
+exit 2
 SH
 chmod +x "${old_node_bin}/node"
+node_only_profile="${test_root}/node-only-profile.json"
+cat > "${node_only_profile}" <<'JSON'
+{
+  "version": 1,
+  "mcp": {
+    "servers": {
+      "context7": { "enabled": true },
+      "serena": { "enabled": false },
+      "playwright": { "enabled": true, "mode": "loopback", "allowedOrigins": [] },
+      "github": { "enabled": false },
+      "sentry": { "enabled": false }
+    }
+  }
+}
+JSON
 printf '{"mcpServers":{"stale":{}}}\n' > "${installed_plugin}/mcp_config.json"
 HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${old_node_bin}:${fake_bin}:${PATH}" \
   EXPECT_CORE_ONLY=1 \
-  ./install.sh > "${test_root}/install-graceful.log" 2>&1
-grep -Fq 'Continuing with the core harness only' "${test_root}/install-graceful.log" || \
-  fail 'recoverable MCP bootstrap failure did not report core-only fallback'
+  ./install.sh --config "${node_only_profile}" > "${test_root}/install-graceful.log" 2>&1
+grep -Fq 'those MCP servers were omitted' "${test_root}/install-graceful.log" || \
+  fail 'recoverable Node MCP failure did not report selective fallback'
 [[ ! -e "${installed_plugin}/mcp_config.json" ]] || \
   fail 'graceful fallback left a stale enabled MCP config in the installed plugin'
+
+HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${old_node_bin}:${fake_bin}:${PATH}" \
+  EXPECT_CORE_ONLY=1 \
+  ./install.sh --config "${node_only_profile}" --playwright-unrestricted \
+  > "${test_root}/install-graceful-unrestricted.log" 2>&1
+grep -Fq 'those MCP servers were omitted' "${test_root}/install-graceful-unrestricted.log" || \
+  fail 'runtime fallback conflicted with the explicit Playwright network override'
 
 cat > "${fake_bin}/codex-harness-github-mcp-server" <<'SH'
 #!/usr/bin/env bash
@@ -432,7 +504,7 @@ if [[ "${1:-}" == "--version" ]]; then
   printf 'v20.18.1\n'
   exit 0
 fi
-if [[ "${1:-}" == */scripts/configure-playwright-mcp.js ]]; then
+if [[ "${1:-}" == */scripts/render-mcp-config.js ]]; then
   exec "${HARNESS_TEST_REAL_NODE:?}" "$@"
 fi
 exit 2
@@ -456,6 +528,113 @@ HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${fake_bin}:${PATH}" \
 HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${fake_bin}:${PATH}" \
   EXPECT_PLAYWRIGHT_LOOPBACK_ONLY=1 \
   ./install.sh > "${test_root}/install-loopback-restored.log"
+
+profile_dir="${test_root}/profiles with spaces"
+mkdir -p -- "${profile_dir}"
+selective_profile="${profile_dir}/selective profile.json"
+cat > "${selective_profile}" <<'JSON'
+{
+  "version": 1,
+  "mcp": {
+    "servers": {
+      "context7": { "enabled": false },
+      "serena": { "enabled": false },
+      "playwright": {
+        "enabled": true,
+        "mode": "allowlist",
+        "allowedOrigins": ["https://preview.example.com", "https://staging.example.com:8443"]
+      },
+      "github": { "enabled": false },
+      "sentry": { "enabled": true }
+    }
+  }
+}
+JSON
+HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${fake_bin}:${PATH}" \
+  EXPECT_MCP_SERVERS='harness-playwright,harness-sentry' \
+  EXPECT_PLAYWRIGHT_EXACT_ORIGINS='https://preview.example.com;https://staging.example.com:8443' \
+  ./install.sh --config "${selective_profile}" > "${test_root}/install-selective-profile.log"
+
+HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${fake_bin}:${PATH}" \
+  EXPECT_MCP_SERVERS='harness-playwright,harness-sentry' \
+  EXPECT_PLAYWRIGHT_UNRESTRICTED=1 \
+  ./install.sh --config "${selective_profile}" --playwright-unrestricted \
+  > "${test_root}/install-profile-override.log"
+
+partial_profile="${profile_dir}/partial fallback.json"
+cat > "${partial_profile}" <<'JSON'
+{
+  "version": 1,
+  "mcp": {
+    "servers": {
+      "context7": { "enabled": false },
+      "serena": { "enabled": true },
+      "playwright": { "enabled": false, "mode": "loopback", "allowedOrigins": [] },
+      "github": { "enabled": false },
+      "sentry": { "enabled": true }
+    }
+  }
+}
+JSON
+no_uvx_bin="${test_root}/no-uvx-bin"
+mkdir -p -- "${no_uvx_bin}"
+for runtime in agy node npx codex-harness-github-mcp-server; do
+  ln -s "${fake_bin}/${runtime}" "${no_uvx_bin}/${runtime}"
+done
+ln -s "$(command -v python3)" "${no_uvx_bin}/python3"
+HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${no_uvx_bin}:/usr/bin:/bin" \
+  EXPECT_MCP_SERVERS='harness-sentry' \
+  ./install.sh --config "${partial_profile}" > "${test_root}/install-partial-fallback.log" 2>&1
+grep -Fq 'Serena MCP was omitted because uvx is unavailable' "${test_root}/install-partial-fallback.log" || \
+  fail 'selective fallback did not explain the omitted Serena MCP'
+
+invalid_profile="${profile_dir}/invalid profile.json"
+cat > "${invalid_profile}" <<'JSON'
+{"version":1,"mcp":{"servers":{"context7":{"enabled":true,"command":"unsafe"}}}}
+JSON
+agy_marker="${test_root}/agy-called"
+set +e
+HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${fake_bin}:${PATH}" \
+  AGY_CALL_MARKER="${agy_marker}" \
+  ./install.sh --config "${invalid_profile}" > "${test_root}/install-invalid-profile.log" 2>&1
+invalid_profile_status="$?"
+set -e
+[[ "${invalid_profile_status}" == "2" ]] || fail 'installer did not reject an invalid MCP profile with status 2'
+[[ ! -e "${agy_marker}" ]] || fail 'installer called Antigravity before rejecting an invalid MCP profile'
+grep -Fq 'configuration.mcp.servers' "${test_root}/install-invalid-profile.log" || \
+  fail 'installer did not explain the invalid MCP profile'
+
+no_agy_bin="${test_root}/no-agy-bin"
+mkdir -p -- "${no_agy_bin}"
+ln -s "${real_node}" "${no_agy_bin}/node"
+cat > "${no_agy_bin}/curl" <<'SH'
+#!/usr/bin/env bash
+: > "${HARNESS_CURL_MARKER:?}"
+exit 99
+SH
+chmod +x "${no_agy_bin}/curl"
+curl_marker="${test_root}/curl-called-before-validation"
+set +e
+HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${no_agy_bin}:/usr/bin:/bin" \
+  HARNESS_CURL_MARKER="${curl_marker}" \
+  ./install.sh --config "${invalid_profile}" > "${test_root}/install-invalid-before-bootstrap.log" 2>&1
+invalid_before_bootstrap_status="$?"
+set -e
+[[ "${invalid_before_bootstrap_status}" == "2" ]] || \
+  fail 'invalid profile without a preinstalled agy did not exit with status 2'
+[[ ! -e "${curl_marker}" ]] || \
+  fail 'installer downloaded Antigravity before validating the MCP profile'
+
+HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${fake_bin}:${PATH}" \
+  HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS='not-an-origin' \
+  EXPECT_CORE_ONLY=1 \
+  ./install.sh --skip-mcp > "${test_root}/install-skip-ignores-origin.log" 2>&1
+
+HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${fake_bin}:${PATH}" \
+  HARNESS_SKIP_MCP_BOOTSTRAP=1 \
+  HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS='not-an-origin' \
+  EXPECT_CORE_ONLY=1 \
+  ./install.sh > "${test_root}/install-env-skip-ignores-origin.log" 2>&1
 
 set +e
 HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${fake_bin}:${PATH}" \
@@ -556,7 +735,7 @@ case "${1:-}" in
       printf '[{"name": "codex-claude-harness"}]\n'
     fi
     ;;
-  models) printf 'gemini-3.7-flash-high\n' ;;
+  models) printf 'gemini-3.8-flash-high\n' ;;
   *) exit 2 ;;
 esac
 SH
@@ -601,13 +780,31 @@ grep -Fq 'npx -y @playwright/mcp@0.0.79 install-browser chromium' "${test_root}/
 grep -Fq 'Core harness is ready; resolve the warnings above' "${test_root}/doctor-missing.log" || \
   fail 'doctor reported full readiness despite a missing browser component'
 
+cat > "${doctor_plugin}/mcp_config.json" <<'JSON'
+{
+  "mcpServers": {
+    "harness-sentry": {
+      "serverUrl": "https://mcp.sentry.dev/mcp?skills=inspect",
+      "disabledTools": ["update_issue", "analyze_issue_with_seer", "execute_sentry_tool"],
+      "disabled": false
+    }
+  }
+}
+JSON
+HOME="${doctor_home}" PATH="${doctor_bin}:${PATH}" PW_FIXTURE_ROOT="${browser_root}" \
+  ./doctor.sh > "${test_root}/doctor-selective.log" 2>&1
+grep -Fq 'automatic MCP inventory: harness-sentry' "${test_root}/doctor-selective.log" || \
+  fail 'doctor did not report the selective MCP inventory'
+grep -Fq 'Everything is ready' "${test_root}/doctor-selective.log" || \
+  fail 'doctor required disabled MCP runtimes for a selective profile'
+
 rm -f -- "${doctor_plugin}/mcp_config.json"
 HOME="${doctor_home}" PATH="${doctor_bin}:${PATH}" PW_FIXTURE_ROOT="${browser_root}" \
   ./doctor.sh > "${test_root}/doctor-core-only.log" 2>&1
-grep -Fq 'installed in core-only mode' "${test_root}/doctor-core-only.log" || \
-  fail 'doctor did not distinguish a core-only installation from full MCP readiness'
-grep -Fq 'Core harness is ready; resolve the warnings above' "${test_root}/doctor-core-only.log" || \
-  fail 'doctor reported full readiness for a core-only installation'
+grep -Fq 'core harness is installed without automatic MCP servers' "${test_root}/doctor-core-only.log" || \
+  fail 'doctor did not report the intentional core-only state'
+grep -Fq 'Everything is ready' "${test_root}/doctor-core-only.log" || \
+  fail 'doctor treated an intentional core-only profile as a runtime failure'
 
 printf 'relative/python\n' > "${doctor_plugin}/scripts/.python-runtime"
 if HOME="${doctor_home}" PATH="${doctor_bin}:${PATH}" PW_FIXTURE_ROOT="${browser_root}" \
