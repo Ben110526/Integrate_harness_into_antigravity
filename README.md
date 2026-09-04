@@ -118,6 +118,86 @@ The harness automatically determines task complexity and selects the optimal exe
 > - `REVIEW_ONLY`: Conceptual or static analysis with independent `harness-reviewer` (no behavioral execution claims).
 > - `REVIEW_VERIFY`: Concrete bug diagnosis, runtime behavior, security audits, or modified-code reviews, pairing `harness-reviewer` with `harness-verifier`.
 
+<details>
+<summary><b>⚡ Auto-Approving Allowed Commands (Terminal Permissions)</b></summary>
+
+By default, Antigravity CLI may prompt for approval before executing certain terminal commands. You can configure `settings.json` with an allowlist so safe inspection tools and standard test runners execute automatically without manual confirmation prompts.
+
+#### How to open `settings.json`:
+- **macOS / Linux:**
+  - Location: `~/.gemini/antigravity-cli/settings.json`
+  - Open via VS Code: `code ~/.gemini/antigravity-cli/settings.json`
+  - Or open in default text editor: `open -e ~/.gemini/antigravity-cli/settings.json` (macOS) or `nano ~/.gemini/antigravity-cli/settings.json`
+- **Windows:**
+  - Location: `%USERPROFILE%\.gemini\antigravity-cli\settings.json`
+  - Open via VS Code: `code $HOME\.gemini\antigravity-cli\settings.json`
+  - Or open in Notepad: `notepad $HOME\.gemini\antigravity-cli\settings.json` (or press Win+R and run `notepad %USERPROFILE%\.gemini\antigravity-cli\settings.json`)
+
+#### Recommended Configuration:
+Add the allowlist rules under `permissions.allow`:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "command(pwd)",
+      "command(ls)",
+      "command(find)",
+      "command(cat)",
+      "command(head)",
+      "command(tail)",
+      "command(wc)",
+      "command(grep)",
+      "command(rg)",
+      "command(file)",
+      "command(stat)",
+      "command(which)",
+      "command(where)",
+      "command(diff)",
+
+      "command(Get-Location)",
+      "command(Get-ChildItem)",
+      "command(Get-Content)",
+      "command(Select-String)",
+      "command(Get-Item)",
+      "command(Get-Command)",
+      "command(Compare-Object)",
+
+      "command(git status)",
+      "command(git diff)",
+      "command(git log)",
+      "command(git show)",
+      "command(git rev-parse)",
+      "command(git ls-files)",
+      "command(git grep)",
+
+      "command(pytest)",
+      "command(python -m pytest)",
+      "command(python3 -m pytest)",
+      "command(python -m unittest)",
+      "command(python3 -m unittest)",
+
+      "command(npm test)",
+      "command(npm run (test|lint|typecheck|check|build))",
+      "command(pnpm (test|lint|typecheck|check|build))",
+      "command(yarn (test|lint|typecheck|check|build))",
+      "command(bun test)",
+      "command(deno test)",
+
+      "command(go test)",
+      "command(go vet)",
+      "command(cargo test)",
+      "command(cargo check)",
+      "command(dotnet test)",
+      "command(mvn test)",
+      "command(gradle test)"
+    ]
+  }
+}
+```
+
+</details>
+
 ---
 
 ## ✨ Core Capabilities
