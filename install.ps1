@@ -239,7 +239,7 @@ function Invoke-HarnessMcpRenderer {
     }
 }
 
-function Disable-HarnessMcpServers([string[]] $ServerNames, [string] $Reason) {
+function Disable-HarnessMcpServer([string[]] $ServerNames, [string] $Reason) {
     $newlyDisabled = @()
     foreach ($serverName in $ServerNames) {
         if (($script:enabledMcpServers -contains $serverName) -and ($script:disabledMcpServers -notcontains $serverName)) {
@@ -298,14 +298,14 @@ else {
             $nodeVersion = $null
             $nodeVersionValid = [System.Version]::TryParse($nodeVersionText, [ref]$nodeVersion) -and $nodeVersion -ge [System.Version]"20.18.1"
             if (-not $nodeVersionValid) {
-                Disable-HarnessMcpServers @("context7", "playwright") "Node.js 20.18.1+ is required; found $nodeVersionText"
+                Disable-HarnessMcpServer @("context7", "playwright") "Node.js 20.18.1+ is required; found $nodeVersionText"
             }
             elseif (-not (Get-Command npx -ErrorAction SilentlyContinue)) {
-                Disable-HarnessMcpServers @("context7", "playwright") "npx is unavailable"
+                Disable-HarnessMcpServer @("context7", "playwright") "npx is unavailable"
             }
         }
         if (($enabledMcpServers -contains "serena") -and -not (Get-Command uvx -ErrorAction SilentlyContinue)) {
-            Disable-HarnessMcpServers @("serena") "uvx is unavailable"
+            Disable-HarnessMcpServer @("serena") "uvx is unavailable"
         }
     }
 }
@@ -336,7 +336,7 @@ if ($enabledMcpServers -contains "github") {
     }
     catch {
         $githubMcpStatus = "unavailable; GitHub MCP disabled"
-        Disable-HarnessMcpServers @("github") $_.Exception.Message
+        Disable-HarnessMcpServer @("github") $_.Exception.Message
     }
 }
 elseif (-not $SkipMcp) {

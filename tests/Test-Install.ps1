@@ -64,7 +64,7 @@ function Invoke-TestInstaller(
     return $status
 }
 
-function Assert-OnlyServers([string] $ConfigPath, [string[]] $ExpectedServers) {
+function Assert-OnlyServer([string] $ConfigPath, [string[]] $ExpectedServers) {
     if (-not (Test-Path $ConfigPath -PathType Leaf)) {
         throw "installer did not publish the expected MCP configuration: $ConfigPath"
     }
@@ -162,7 +162,7 @@ exit 0
     $sentryLog = Join-Path $testRoot "sentry-only.log"
     $status = Invoke-TestInstaller $sentryLog $sentryCapture @("-ConfigPath", $spacedConfig) "1" $restrictedPath
     if ($status -ne 0) { throw "installer failed a spaced ConfigPath with dependency-free Sentry enabled" }
-    Assert-OnlyServers $sentryCapture @("sentry")
+    Assert-OnlyServer $sentryCapture @("sentry")
     $sentryOutput = Get-Content $sentryLog -Raw
     if ($sentryOutput.Contains("npx is unavailable") -or $sentryOutput.Contains("uvx is unavailable")) {
         throw "installer checked runtimes for disabled MCP servers"
@@ -185,7 +185,7 @@ exit 0
         $script:installerPath = $savedInstallerPath
     }
     if ($status -ne 0) { throw "installer failed to auto-discover its package-root harness.config.json" }
-    Assert-OnlyServers $automaticCapture @("sentry")
+    Assert-OnlyServer $automaticCapture @("sentry")
 
     $partialConfig = Join-Path $testRoot "partial fallback.json"
     Write-TestConfig $partialConfig @("context7", "serena", "playwright", "sentry")
@@ -193,7 +193,7 @@ exit 0
     $partialLog = Join-Path $testRoot "partial-fallback.log"
     $status = Invoke-TestInstaller $partialLog $partialCapture @("-ConfigPath", $partialConfig) "1" $restrictedPath
     if ($status -ne 0) { throw "installer failed instead of retaining independent MCP servers" }
-    Assert-OnlyServers $partialCapture @("sentry")
+    Assert-OnlyServer $partialCapture @("sentry")
     $partialOutput = Get-Content $partialLog -Raw
     foreach ($expectedWarning in @("context7", "playwright", "serena", "uvx is unavailable")) {
         if (-not $partialOutput.Contains($expectedWarning)) { throw "partial fallback did not explain missing $expectedWarning" }
@@ -208,7 +208,7 @@ exit 0
     $unrestrictedLog = Join-Path $testRoot "playwright-unrestricted.log"
     $status = Invoke-TestInstaller $unrestrictedLog $unrestrictedCapture @("-ConfigPath", $playwrightConfig, "-PlaywrightUnrestricted") "1" $fullPath
     if ($status -ne 0) { throw "legacy Playwright command-line override failed: $(Get-Content $unrestrictedLog -Raw)" }
-    Assert-OnlyServers $unrestrictedCapture @("playwright", "sentry")
+    Assert-OnlyServer $unrestrictedCapture @("playwright", "sentry")
     $playwrightArgs = @((Get-Content $unrestrictedCapture -Raw | ConvertFrom-Json).mcpServers."harness-playwright".args)
     if ($playwrightArgs -contains "--allowed-origins" -or $playwrightArgs -contains "https://from-config.example.com") {
         throw "-PlaywrightUnrestricted did not override the profile"
