@@ -16,6 +16,7 @@ import tempfile
 import time
 from typing import Optional
 import unittest
+from unittest import mock
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -807,6 +808,51 @@ class VerificationGateTests(unittest.TestCase):
                 self.write(target=self.workspace / "src" / "logic.ts")
                 self.command(2, command)
                 self.assertEqual(self.stop(), {"decision": "allow"})
+
+    def test_gradle_colon_scoped_tasks_do_not_fail_on_windows_path_resolution(self) -> None:
+        state_path = self.artifacts / GATE_MODULE.STATE_FILE
+        state_path.unlink(missing_ok=True)
+        self.write(target=self.workspace / "src" / "logic.ts")
+        self.command(2, "./gradlew :app:test")
+        self.assertEqual(self.stop(), {"decision": "allow"})
+
+        for outside_cmd in (
+            "./gradlew :app:test --project-dir ../outside",
+            "./gradlew :app:test --project-dir=../outside",
+            "./gradlew :app:test -b ../outside/build.gradle",
+            "./gradlew :app:test -b=../outside/build.gradle",
+            "./gradlew --project-dir ../outside :app:test",
+            "./gradlew -b ../outside/build.gradle :app:test",
+        ):
+            with self.subTest(command=outside_cmd):
+                state_path.unlink(missing_ok=True)
+                self.write(target=self.workspace / "src" / "logic.ts")
+                self.command(2, outside_cmd)
+                self.assertEqual(self.stop()["decision"], "continue")
+
+        orig_is_within = GATE_MODULE._is_within
+
+        def fail_on_colon(candidate: Path, root: Path) -> bool:
+            if any(":" in part for part in candidate.parts[1:]):
+                raise OSError(123, "The filename, directory name, or volume label syntax is incorrect")
+            return orig_is_within(candidate, root)
+
+        with mock.patch.object(GATE_MODULE, "_is_within", side_effect=fail_on_colon):
+            self.assertTrue(
+                GATE_MODULE._verification_scope_is_known(
+                    "./gradlew :app:test", self.workspace, [self.workspace]
+                )
+            )
+            self.assertFalse(
+                GATE_MODULE._verification_scope_is_known(
+                    "./gradlew :app:test --project-dir ../outside", self.workspace, [self.workspace]
+                )
+            )
+            self.assertFalse(
+                GATE_MODULE._verification_scope_is_known(
+                    "./gradlew :app:test -b ../outside/build.gradle", self.workspace, [self.workspace]
+                )
+            )
 
     def test_clang_format_requires_real_dry_run_check(self) -> None:
         self.write()

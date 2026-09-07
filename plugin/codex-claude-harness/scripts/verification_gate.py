@@ -910,7 +910,7 @@ def _has_flag(values: list[str], flags: set[str]) -> bool:
 
 
 def _gradle_task_key(value: str) -> Optional[str]:
-    if not value or value.startswith("-") or "=" in value:
+    if not value or value.startswith("-") or "=" in value or "/" in value or "\\" in value:
         return None
     return value.casefold()
 
@@ -1653,6 +1653,10 @@ def _verification_scope_is_known(
         if "/" in values[0] or "\\" in values[0]:
             if not Path(values[0]).is_absolute() or _script_name_is_evidence(values[0]):
                 targets.append(values[0])
+        gradle_tasks: set[str] = set()
+        if executable in {"gradle", "gradlew"}:
+            requested, excluded = _gradle_tasks(arguments)
+            gradle_tasks = requested | excluded
         for value in targets:
             if _is_counted_runner(value):
                 continue
@@ -1660,6 +1664,10 @@ def _verification_scope_is_known(
             # pytest node IDs are paths followed by ::Class::method.
             target_value = target_value.split("::", 1)[0]
             if not target_value or target_value in {"<", ">", ">>", "2", "1"}:
+                continue
+            if executable in {"gradle", "gradlew"} and target_value.casefold() in gradle_tasks:
+                continue
+            if target_value.startswith(":"):
                 continue
             if target_value.startswith("-"):
                 if "/" in target_value or "\\" in target_value:
