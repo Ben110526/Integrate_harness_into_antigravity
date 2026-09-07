@@ -101,6 +101,34 @@ Explain why the build is failing.
 >
 > Your selection is persisted across sessions. Use `/usage` to monitor your quota.
 
+### One goal across multiple milestones
+
+Describe the intended outcome, scope, constraints, and observable success checks
+once. For authorized multi-milestone implementation, the policy loads
+`harness-run` automatically; you can also request it explicitly:
+
+```text
+/harness-run Add import validation, persistence, and an end-to-end test.
+Preserve existing user edits and public behavior. Plan and implement the goal,
+verify each AC, and continue to the next ready milestone without waiting for me
+to say continue. Do not install, push, or deploy.
+```
+
+The workflow keeps one coordinator, carries stable AC IDs across milestones,
+rechecks evidence against source changes, and prefers supported native artifacts
+for handoff/resume. Tiny edits keep their fast path; plan-only stays read-only.
+This is a workflow contract, not an added scheduler. A bounded
+[live smoke report](docs/live-verification-2026-09-07.md) records fixture completion;
+general reliability and durable native resume still require the pilot in
+[Long-running workflow](docs/long-running-workflow.md). It cannot continue after
+app shutdown or exhausted runtime resources by itself.
+
+For verification, use explicit workspace directories and in-scope test targets.
+The bundled `scripts/verify_tests.py unittest` adapter rejects empty/all-skipped
+unittest runs; plain unittest/doctest no longer close behavioral hook debt.
+Other runner counts and live async completion still need verifier inspection.
+See [Verification evidence and limitations](docs/verification-evidence.md).
+
 ### Automatic Routing
 
 The harness automatically determines task complexity and selects the optimal execution path:
@@ -229,8 +257,9 @@ Add the allowlist rules under `permissions.allow`:
 ## 🩺 Troubleshooting & Diagnostics
 
 Run the automated diagnostic health check to verify your environment (`agy`, Python, MCP servers, quota):
+
 - **macOS / Linux:** `./doctor.sh`
-- **Windows:** `.\doctor.ps1`
+- **Windows:** `bash ./doctor.sh` from a terminal with Git for Windows Bash on `PATH`.
 
 <details>
 <summary><b>Frequently Asked Questions & Common Issues</b></summary>
@@ -252,6 +281,8 @@ Run deterministic repository checks without consuming model quota:
 ```
 
 ### Deep-Dive Documentation
+
 - [Detailed Architecture & Security Controls (docs/architecture.md)](docs/architecture.md)
+- [Multi-milestone goals, checkpoints, resume, and native pilot](docs/long-running-workflow.md)
 - [MCP Configuration & Network Permissions (docs/mcp-profiles.md)](docs/mcp-profiles.md)
 - [Eval Harness & Benchmark Methodology (evals/README.md)](evals/README.md)

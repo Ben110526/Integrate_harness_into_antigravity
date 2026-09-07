@@ -21,6 +21,7 @@ Verify the behavior or change assigned by the parent without editing product cod
 - Keep checks bounded and run them in the foreground. Do not start background tasks, poll indefinitely, or bypass the sandbox unless the parent explicitly requires it.
 - Never recursively launch `agy`, `doctor.sh`, `install.sh`, `install.ps1`, or another installer/bootstrap command from inside an active Antigravity session unless installation testing is the assigned scope. Use project-local syntax, lint, test, build, or static checks instead, and report nested client/bootstrap checks as skipped.
 - Record the exact command, exit status, and useful failure excerpt.
+- Require an explicit in-workspace Cwd and in-scope targets. Plain unittest/doctest can pass with zero tests; use the discovered bundled `scripts/verify_tests.py unittest <native arguments>` via Python for counted unittest runs. Other runner counts remain unverified unless observed in their actual results. Confirm foreground completion, nonempty relevant execution, and current-source scope; command recognition or a printed summary is not a coverage proof.
 - For a bug fix, capture or consume the pre-fix red-state command and rerun that exact command unchanged after the fix. If reproduction is unsafe or infeasible, record why and use the strongest feasible falsification check.
 - Separate failures caused by the change from environment or pre-existing failures when evidence permits.
 - Do not hide, auto-fix, or reinterpret failed checks as success.

@@ -268,7 +268,7 @@ expected_inventory = {
     "skill": {
         "harness-adr", "harness-benchmark", "harness-clarify", "harness-debug", "harness-implement",
         "harness-mcp-profile", "harness-migration", "harness-plan", "harness-review",
-        "harness-ship", "harness-test",
+        "harness-run", "harness-ship", "harness-test",
     },
     "agent": {
         "harness-db-architect", "harness-documenter", "harness-implementer",
@@ -308,6 +308,7 @@ fake_tmp="${test_root}/tmp"
 real_node="$(command -v node || true)"
 [[ -n "${real_node}" ]] || fail 'Node.js is required for installer fixture checks'
 export HARNESS_TEST_REAL_NODE="${real_node}"
+export HARNESS_TEST_PLUGIN_SOURCE="${repo_root}/plugin/codex-claude-harness"
 mkdir -p -- "${fake_bin}" "${fake_home}/.gemini" "${fake_tmp}"
 printf '# Existing user rule\n\n- Keep this line.\n' > "${fake_home}/.gemini/GEMINI.md"
 
@@ -319,6 +320,14 @@ if [[ -n "${AGY_CALL_MARKER:-}" ]]; then
 fi
 case "${1:-}" in
   plugin)
+    # This fake validates the staged package but does not emulate the native
+    # client's installed-file copy. Check new assets at the actual handoff.
+    for relative in scripts/verify_tests.py skills/harness-run/SKILL.md; do
+      cmp -s "${HARNESS_TEST_PLUGIN_SOURCE}/${relative}" "${3:-}/${relative}" || {
+        printf 'staged plugin is missing or changed: %s\n' "${relative}" >&2
+        exit 9
+      }
+    done
     if [[ "${EXPECT_CORE_ONLY:-0}" == "1" && -f "${3:-}/mcp_config.json" ]]; then
       printf 'core-only fixture received an enabled mcp_config.json\n' >&2
       exit 9

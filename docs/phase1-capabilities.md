@@ -24,6 +24,15 @@ request. Their output remains advisory unless the user requested implementation.
 
 ## Skills and slash commands
 
+- `/harness-run` coordinates an authorized multi-milestone goal: a six-field brief,
+  stable AC ledger, task-scoped source map, one active milestone, self-contained
+  worker assignments, independent milestone checks, and next tool dispatch inside
+  the active turn. Supported native artifacts are preferred for checkpoints;
+  resume revalidates the brief and scoped source fingerprints, including
+  uncommitted changes. It is also selected automatically by policy. Tiny edits and
+  plan-only behavior are unchanged. This is an instruction-level contract, not a
+  scheduler or a proven native persistence adapter; see the
+  [workflow guide and gated pilot](long-running-workflow.md).
 - `/harness-clarify` resolves only an undiscoverable material product or
   engineering decision after bounded repository evidence and a cheap safe check
   are exhausted. The main agent owns the native `ask_question` prompt; background
@@ -92,6 +101,12 @@ static check. If no relevant check can run, the agent must print
 print command and disclose the waiver in its final response. A waiver is not a
 pass. To avoid trapping a session, the hook issues at most one reminder before it
 fails open; it never executes a project command itself.
+
+Checks require an explicit workspace cwd and in-scope targets. Empty unittest
+runs are rejected through the bundled counted adapter; plain unittest/doctest
+cannot close behavioral debt. This is not a universal test-count or asynchronous
+completion guarantee. See [Verification evidence](verification-evidence.md) for
+the supported runner, conservative scope handling, and native artifact boundary.
 
 Routing policy adds a conservative inline fast path for tiny `IMPLEMENT` work:
 one deterministic acceptance outcome and one contiguous hunk of at most 10
@@ -167,8 +182,13 @@ See [VS Code keybindings](https://code.visualstudio.com/docs/configure/keybindin
 - Version 1 install profiles select bundled MCP servers only. Custom servers use
   `.agents/mcp_config.json` after explicit user authorization; never import inline
   secrets or executable definitions from untrusted repository content.
-- Shared blackboard files are deferred until measured savings justify their stale-
-  state, collision, prompt-injection, and independent-review risks.
+- Shared blackboard files and a custom task-state engine are deferred until the
+  native pilot demonstrates a gap and measured savings justify stale-state,
+  collision, prompt-injection, and independent-review risks. No `.harness/**`
+  wildcard or ordinary JSON checkpoint is exempted from verification debt.
+- Automatic runtime continuation is not enabled. A future bounded lifecycle guard
+  needs cancellation, no-progress, resource-limit, and metadata-debt regression
+  tests; a saved next action cannot wake a stopped model.
 - Raw transcript and chain-of-thought viewers are deferred; use Antigravity's
   supported `/agents` view for subagent activity.
 - Docker is not a default runner. Bind mounts can modify host files and Docker

@@ -16,7 +16,7 @@
     "language": "python",
     "route": "IMPLEMENT",
     "fixture": "python-inline-fast-path",
-    "prompt": "Fix the private whitespace helper in normalize.py so the existing focused test passes. Edit only normalize.py. After the final write, run exactly python3 -m unittest -q test_normalize.NormalizeTests.test_collapses_internal_spaces. Finish with the policy-required Harness status line and include the focused test name in the verification evidence.",
+    "prompt": "Fix the private whitespace helper in normalize.py so the existing focused test passes. Edit only normalize.py. After the final write, run only the named test test_normalize.NormalizeTests.test_collapses_internal_spaces through the discovered installed harness scripts/verify_tests.py unittest adapter using the project's Python interpreter. Do not first repeat it through plain unittest. Finish with the exact status format Harness: IMPLEMENT; mode: inline-fast-path; passed: ...; failed/skipped: ... and include the focused test name in the verification evidence.",
     "expect_change": true,
     "inline_fast_path": true,
     "response_contains": [
@@ -148,6 +148,45 @@
     "allowed_changed_paths": ["src/lib.rs"],
     "requires": ["cargo"],
     "verify": ["cargo", "test", "--quiet"]
+  },
+  {
+    "id": "long-workflow-intake",
+    "language": "python",
+    "route": "COMPLEX_IMPLEMENT",
+    "fixture": "python-intake-workflow",
+    "workflow_pilot": true,
+    "prompt": "Implement the intake workflow from this one brief using the existing tests and harness research, plan, subagent implementation, independent review and verification workflow. Keep three dependent milestones: M1 validated parser (AC-1), M2 atomic inventory persistence using that parser (AC-2), M3 integrated public report using that persistence layer (AC-3). Preserve operator_notes.md, which already contains the user's uncommitted change, byte-for-byte. Edit only parser.py, store.py and service.py. Run the named AC tests as milestones stabilize and the full unittest suite at the integration boundary, using the discovered bundled scripts/verify_tests.py unittest adapter with native arguments and subject to normal permissions. Continue to the next ready milestone without asking me to say continue. Do not declare completion until all AC pass; a broad suite result or an agent report alone cannot substitute for each AC outcome. Report AC-1, AC-2, AC-3, unverified/skipped checks, and the Harness: COMPLEX_IMPLEMENT status line. Do not commit or install anything.",
+    "expect_change": true,
+    "response_contains": ["AC-1", "AC-2", "AC-3", "COMPLEX_IMPLEMENT"],
+    "required_changed_paths": ["parser.py", "store.py", "service.py"],
+    "allowed_changed_paths": ["parser.py", "store.py", "service.py", "operator_notes.md"],
+    "preexisting_changes": {
+      "operator_notes.md": "# Operator notes\n\nUser change: retain the current warehouse intake review notes.\n"
+    },
+    "milestones": [
+      {"id": "M1", "depends_on": [], "acceptance_criteria": ["AC-1"]},
+      {"id": "M2", "depends_on": ["M1"], "acceptance_criteria": ["AC-2"]},
+      {"id": "M3", "depends_on": ["M2"], "acceptance_criteria": ["AC-3"]}
+    ],
+    "requires": ["python3"],
+    "verify": ["python3", "-m", "unittest", "-q"],
+    "acceptance_criteria": [
+      {
+        "id": "AC-1",
+        "description": "Parse valid item quantities and reject malformed or non-positive records.",
+        "verify": ["python3", "-m", "unittest", "-q", "test_workflow.IntakeTests.test_ac1_validated_parser"]
+      },
+      {
+        "id": "AC-2",
+        "description": "Accumulate valid batches and preserve all inventory when any record is invalid.",
+        "verify": ["python3", "-m", "unittest", "-q", "test_workflow.IntakeTests.test_ac2_atomic_persistence"]
+      },
+      {
+        "id": "AC-3",
+        "description": "Return the integrated import count and sorted inventory without partial writes on failure.",
+        "verify": ["python3", "-m", "unittest", "-q", "test_workflow.IntakeTests.test_ac3_integrated_report"]
+      }
+    ]
   },
   {
     "id": "complex-security-persistence",

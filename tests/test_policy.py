@@ -14,6 +14,7 @@ CLARIFY_SKILL = (
     / "SKILL.md"
 )
 AGENT_DIRECTORY = ROOT / "plugin" / "codex-claude-harness" / "agents"
+SKILL_DIRECTORY = AGENT_DIRECTORY.parent / "skills"
 BASELINE_BYTES = 9358
 
 
@@ -119,7 +120,7 @@ class PolicyTests(unittest.TestCase):
             "runs one narrow check",
             "existing focused behavioral check for source",
             "The inline fast path is the only write-route exception",
-            "report `mode: inline-fast-path` in the `Harness:` line",
+            "report `Harness: IMPLEMENT; mode: inline-fast-path; passed: ...; failed/skipped: ...`",
         }
         self.assertFalse(
             {term for term in eligibility_contract if term not in self.policy}
@@ -195,6 +196,61 @@ class PolicyTests(unittest.TestCase):
             frontmatter = text.split("---", 2)[1]
             self.assertNotIn("ask_question", frontmatter, path)
             self.assertIn("[UNRESOLVED]", text, path)
+
+    def test_multimilestone_skill_is_discoverable_without_expanding_global_budget(self) -> None:
+        self.assertIn("For authorized multi-milestone work, load `/harness-run`", self.policy)
+        expected = {
+            "harness-adr", "harness-benchmark", "harness-clarify", "harness-debug",
+            "harness-implement", "harness-mcp-profile", "harness-migration",
+            "harness-plan", "harness-review", "harness-run", "harness-ship",
+            "harness-test",
+        }
+        self.assertEqual({path.parent.name for path in SKILL_DIRECTORY.glob("*/SKILL.md")}, expected)
+        for name in ("harness-plan", "harness-implement", "harness-ship"):
+            self.assertIn("../harness-run/SKILL.md", (SKILL_DIRECTORY / name / "SKILL.md").read_text())
+
+    def test_run_contract_preserves_routing_authority_and_bounded_dispatch(self) -> None:
+        run = (SKILL_DIRECTORY / "harness-run" / "SKILL.md").read_text(encoding="utf-8")
+        for term in (
+            "plan-only request stays", "Keep tiny edits", "Never infer permission",
+            "Keep exactly one coordinator", "required role", "independent checks",
+            "self-contained handoff", "`send_message`", "worker ID is still valid",
+            "Otherwise invoke", "one active milestone", "non-final",
+            "tool call within the active", "user cancellation", "resource/runtime",
+            "Never force continuation unconditionally", "all required ACs",
+            "An unrelated passing suite", "not task completion",
+        ):
+            self.assertIn(term, run, term)
+
+    def test_resume_contract_requires_provenance_and_does_not_invent_persistence(self) -> None:
+        run = (SKILL_DIRECTORY / "harness-run" / "SKILL.md").read_text(encoding="utf-8")
+        for term in (
+            "brief revision", "superseded ACs", "requirement source",
+            "canonical workspace", "content SHA-256", "missing/deleted markers",
+            "uncommitted, new, and deleted", "before/after source fingerprint",
+            "mark affected evidence stale", "Preserve user changes",
+            "corrupt/incomplete", "not an authenticated runner receipt",
+            "Do not create `.harness/tasks/**`", "ordinary workspace write",
+            "`IsArtifact=True`", "durable resume is unverified",
+            "cancellation, and no-progress limits", "version-1 MCP install profile",
+        ):
+            self.assertIn(term, run, term)
+
+    def test_workflow_docs_distinguish_contracts_from_live_native_proof(self) -> None:
+        guide = (ROOT / "docs" / "long-running-workflow.md").read_text(encoding="utf-8")
+        for term in (
+            "instruction-level workflow", "Gated native pilot", "explicit permission",
+            "installed version or help output", "live-verification-2026-09-07.md",
+            "observations do not establish the full pilot protocol",
+            "at least three matched runs",
+            "permission prompts separately", "Missing trace", "Fake CLI tests",
+            "cancel", "plan-only", "source edit before resume",
+        ):
+            self.assertIn(term, guide, term)
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("docs/long-running-workflow.md", readme)
+        self.assertIn("bash ./doctor.sh", readme)
+        self.assertNotIn(".\\doctor.ps1", readme)
 
 
 if __name__ == "__main__":

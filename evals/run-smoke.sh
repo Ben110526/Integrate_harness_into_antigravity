@@ -6,7 +6,21 @@ repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 model="${HARNESS_EVAL_MODEL:-gemini-3.8-flash-high}"
 case_filter="${HARNESS_EVAL_CASE:-}"
 cases_path="${repo_root}/evals/cases.json"
-max_continuations=3
+max_continuations="${HARNESS_EVAL_MAX_CONTINUATIONS:-3}"
+metrics_path="${HARNESS_EVAL_METRICS_PATH:-}"
+if [[ ! "${max_continuations}" =~ ^[0-3]$ ]]; then
+  printf 'HARNESS_EVAL_MAX_CONTINUATIONS must be 0, 1, 2, or 3.\n' >&2
+  exit 1
+fi
+
+record_case() {
+  if ! python3 "${repo_root}/evals/smoke_results.py" record \
+    "${cases_path}" "${case_index}" "${case_dir}" "${model}" \
+    "${continuations}" "$((failures - case_failures_before))" \
+    "${started}" "${metrics_path}"; then
+    failures=$((failures + 1))
+  fi
+}
 
 print_response_diagnostic() {
   if ! python3 - "$1" <<'PY' >&2
@@ -77,6 +91,16 @@ PY
   if [[ -n "${case_filter}" && "${case_id}" != "${case_filter}" ]]; then
     continue
   fi
+  workflow_pilot="$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("workflow_pilot", False)).lower())' "${cases_path}" "${case_index}")"
+  if [[ "${workflow_pilot}" == "true" && "${HARNESS_EVAL_CONFIRM_QUOTA_USE:-}" != "1" ]]; then
+    if [[ -n "${case_filter}" ]]; then
+      printf '[fail] %s requires HARNESS_EVAL_CONFIRM_QUOTA_USE=1; it consumes model quota.\n' "${case_id}" >&2
+      exit 1
+    fi
+    printf '[skip] %s: long-workflow pilot requires explicit quota opt-in\n' "${case_id}"
+    skipped=$((skipped + 1))
+    continue
+  fi
   selected=$((selected + 1))
   fixture="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])]["fixture"])' "${cases_path}" "${case_index}")"
   prompt="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])]["prompt"])' "${cases_path}" "${case_index}")"
@@ -93,7 +117,6 @@ PY
   max_changed_lines="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("max_changed_lines", ""))' "${cases_path}" "${case_index}")"
   requires_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("requires", [])))' "${cases_path}" "${case_index}")"
   verify_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])]["verify"]))' "${cases_path}" "${case_index}")"
-  acceptance_criteria_json="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("acceptance_criteria", [])))' "${cases_path}" "${case_index}")"
   case_dir="${eval_root}/${case_id}"
   response_path="${eval_root}/${case_id}.json"
 
@@ -118,6 +141,10 @@ PY
   git -C "${case_dir}" config core.hooksPath "${empty_hooks}"
   git -C "${case_dir}" add .
   git -C "${case_dir}" commit -qm baseline
+  python3 "${repo_root}/evals/smoke_results.py" prepare "${cases_path}" "${case_index}" "${case_dir}"
+  continuations=0
+  case_failures_before="${failures}"
+  started="$(python3 -c 'import time; print(time.time())')"
 
   printf '[eval] %s (%s)\n' "${case_id}" "${model}"
   if ! (
@@ -129,6 +156,7 @@ PY
     printf '[fail] %s: agy exited non-zero\n' "${case_id}" >&2
     print_response_diagnostic "${response_path}"
     failures=$((failures + 1))
+    record_case
     continue
   fi
 
@@ -136,6 +164,15 @@ PY
     printf '[fail] %s: response has no conversation ID\n' "${case_id}" >&2
     print_response_diagnostic "${response_path}"
     failures=$((failures + 1))
+    record_case
+    continue
+  fi
+
+  # An error/cancellation is not an incomplete successful turn to retry.
+  if ! python3 -c 'import json,sys; raise SystemExit(0 if json.load(open(sys.argv[1], encoding="utf-8")).get("status") == "SUCCESS" else 1)' "${response_path}"; then
+    printf '[fail] %s: terminal status was not SUCCESS; refusing continuation\n' "${case_id}" >&2
+    failures=$((failures + 1))
+    record_case
     continue
   fi
 
@@ -145,6 +182,7 @@ PY
       break
     fi
     sleep 5
+    continuations=$((continuations + 1))
     if ! (
       cd "${case_dir}"
       agy -p 'Continue the pending work, collect all required subagent results, and finish the response with a Harness status line.' \
@@ -157,10 +195,16 @@ PY
       continuation_failed=true
       break
     fi
+    if ! python3 -c 'import json,sys; raise SystemExit(0 if json.load(open(sys.argv[1], encoding="utf-8")).get("status") == "SUCCESS" else 1)' "${response_path}"; then
+      printf '[fail] %s: continuation terminal status was not SUCCESS\n' "${case_id}" >&2
+      continuation_failed=true
+      break
+    fi
   done
 
   if [[ "${continuation_failed}" == "true" ]]; then
     failures=$((failures + 1))
+    record_case
     continue
   fi
 
@@ -234,6 +278,7 @@ PY
     if [[ -z "${max_diff_hunks}" || -z "${max_changed_lines}" ]]; then
       printf '[fail] %s: incomplete diff-shape contract\n' "${case_id}" >&2
       failures=$((failures + 1))
+      record_case
       continue
     fi
     path_contract=(
@@ -266,23 +311,7 @@ PY
     fi
   fi
 
-  if [[ "${acceptance_criteria_json}" != '[]' ]]; then
-    if ! python3 - "${case_dir}" "${acceptance_criteria_json}" <<'PY'
-import json
-import subprocess
-import sys
-
-case_dir = sys.argv[1]
-for criterion in json.loads(sys.argv[2]):
-    print(f"[acceptance] {criterion['id']}: {criterion['description']}")
-    subprocess.run(criterion["verify"], cwd=case_dir, check=True)
-PY
-    then
-      printf '[fail] %s: acceptance criterion verification failed\n' "${case_id}" >&2
-      print_response_diagnostic "${response_path}"
-      failures=$((failures + 1))
-    fi
-  fi
+  record_case
 done
 
 if ((selected == 0)); then

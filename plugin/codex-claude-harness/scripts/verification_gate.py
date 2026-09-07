@@ -734,9 +734,6 @@ def _citation_status(payload: dict[str, Any]) -> tuple[str, Optional[int]]:
 
 
 def _is_workspace_write(args: dict[str, Any], payload: dict[str, Any]) -> bool:
-    if args.get("IsArtifact") is True:
-        return False
-
     target = args.get("TargetFile")
     if not isinstance(target, str) or not target.strip():
         return False
@@ -1384,6 +1381,16 @@ def _simple_has_behavioral_evidence(values: list[str], depth: int = 0) -> bool:
     args = values[1:]
     lowered = [value.casefold() for value in args]
 
+    # These stdlib entry points can succeed without running any tests. The
+    # bundled adapter enforces a positive native result count instead. The
+    # public PostToolUse contract has no stdout/stderr to inspect here.
+    if executable in {"unittest", "doctest"}:
+        return False
+    if any(value.split("=", 1)[0] in {
+        "--passwithnotests", "--pass-with-no-tests", "--allow-empty",
+    } for value in lowered):
+        return False
+
     if depth < 2 and executable in {"bash", "sh", "zsh"}:
         for option in ("-c", "-lc"):
             if option in lowered:
@@ -1427,6 +1434,8 @@ def _simple_has_behavioral_evidence(values: list[str], depth: int = 0) -> bool:
     if re.fullmatch(r"python\d*(?:\.\d+)?", executable):
         if lowered[:1] == ["-m"] and len(args) > 1:
             return _simple_has_behavioral_evidence([args[1], *args[2:]], depth + 1)
+        if args and Path(args[0]).name == "verify_tests.py":
+            return _is_counted_runner(args[0]) and args[1:2] == ["unittest"]
         return bool(args and _script_name_is_behavioral(args[0]))
     if executable == "coverage":
         if lowered[:1] != ["run"]:
@@ -1548,6 +1557,138 @@ def _command_is_in_workspace(args: dict[str, Any], payload: dict[str, Any]) -> b
     return any(_is_within(candidate, root) for root in roots)
 
 
+def _is_counted_runner(value: str) -> bool:
+    """Only the bundled adapter, not an arbitrary same-named test script."""
+    path = Path(value)
+    return path.is_absolute() and path.resolve(strict=False) == (
+        Path(__file__).resolve().with_name("verify_tests.py")
+    )
+
+
+def _verification_scope_is_known(
+    command: str, cwd: Path, roots: list[Path], depth: int = 0,
+) -> bool:
+    """Conservative lexical scope check, not a shell interpreter or sandbox.
+
+    Follow literal cd chains and bounded nested shells; decline substitutions,
+    implicit location changes and explicit outside targets/configuration. Opaque
+    script internals and module-to-test semantic coverage still need review.
+    """
+    segments, unsafe = _tokens(command)
+    if unsafe or depth > 2 or not segments:
+        return False
+    # Tokenization does not retain quoting. Decline even quoted selectors with
+    # expansion syntax rather than resolve a literal '*' past symlink targets.
+    # The command can still run; only automatic evidence credit is withheld.
+    if any(character in command for character in "$`\x00*?[]{}()~"):
+        return False
+    if os.name == "nt" and ("%" in command or "!" in command):
+        return False
+    for segment in segments:
+        # env --chdir/-C and option-bearing wrappers must not disappear when
+        # _strip_prefixes removes them. Assignments alone preserve the cwd.
+        if any(value.split("=", 1)[0] in {"CDPATH", "PWD", "BASH_ENV", "ENV"} for value in segment):
+            return False
+        for index, value in enumerate(segment):
+            if _executable(value) == "env" and index + 1 < len(segment):
+                if segment[index + 1].startswith("-"):
+                    return False
+            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", value):
+                # Preserve explicit import/configuration search paths that
+                # _strip_prefixes would otherwise discard (e.g. PYTHONPATH).
+                assigned = value.split("=", 1)[1]
+                for entry in assigned.split(os.pathsep):
+                    if not entry:
+                        continue
+                    target = _as_local_path(entry)
+                    if not target.is_absolute():
+                        target = cwd / target
+                    if not any(_is_within(target, root) for root in roots):
+                        return False
+        values = _strip_prefixes(segment)
+        if not values:
+            continue
+        executable = _executable(values[0])
+        arguments = values[1:]
+        lowered = [value.casefold() for value in arguments]
+        if executable in {"pushd", "popd", "set-location", "sl", "chdir", "source", "."}:
+            return False
+        if executable == "cd":
+            if arguments[:1] == ["--"]:
+                arguments = arguments[1:]
+            if len(arguments) != 1 or arguments[0].startswith("-"):
+                return False
+            target = _as_local_path(arguments[0])
+            if not target.is_absolute():
+                if os.environ.get("CDPATH") and not arguments[0].startswith("."):
+                    return False
+                target = cwd / target
+            if not target.is_dir() or not any(_is_within(target, root) for root in roots):
+                return False
+            cwd = target.resolve(strict=False)
+            continue
+        if executable in {"bash", "sh", "zsh", "pwsh", "powershell", "cmd"}:
+            options = {"-c", "-lc", "-command", "/c"}
+            nested = next((i for i, value in enumerate(lowered) if value in options), None)
+            if nested is not None:
+                if executable in {"bash", "sh", "zsh"} and (
+                    nested != 0 or lowered[nested] != "-c"
+                ):
+                    # Login/interactive startup files can change cwd before the
+                    # visible command. A plain -c is the bounded supported form.
+                    return False
+                if executable in {"powershell", "pwsh"} and (
+                    lowered[:nested] != ["-noprofile"]
+                ):
+                    return False
+                # Extra positional shell arguments can replace the script's
+                # parameters. Refuse them instead of guessing their effects.
+                if len(arguments) != nested + 2:
+                    return False
+                if not _verification_scope_is_known(arguments[nested + 1], cwd, roots, depth + 1):
+                    return False
+                continue
+        # A relative executable with a slash is itself a script/test target.
+        targets = list(arguments)
+        if "/" in values[0] or "\\" in values[0]:
+            if not Path(values[0]).is_absolute() or _script_name_is_evidence(values[0]):
+                targets.append(values[0])
+        for value in targets:
+            if _is_counted_runner(value):
+                continue
+            target_value = value.split("=", 1)[-1]
+            # pytest node IDs are paths followed by ::Class::method.
+            target_value = target_value.split("::", 1)[0]
+            if not target_value or target_value in {"<", ">", ">>", "2", "1"}:
+                continue
+            if target_value.startswith("-"):
+                if "/" in target_value or "\\" in target_value:
+                    return False
+                continue
+            if "://" in target_value:
+                return False
+            target = _as_local_path(target_value)
+            if not target.is_absolute():
+                target = cwd / target
+            if not any(_is_within(target, root) for root in roots):
+                return False
+    return True
+
+
+def _evidence_scope_is_known(command: str, args: dict[str, Any], payload: dict[str, Any]) -> bool:
+    cwd_value = args.get("Cwd")
+    root_values = payload.get("workspacePaths")
+    if not isinstance(cwd_value, str) or not isinstance(root_values, list):
+        return False
+    cwd = _as_local_path(cwd_value)
+    roots = [_as_local_path(value) for value in root_values if isinstance(value, str) and value]
+    if not cwd.is_absolute() or not cwd.is_dir() or not roots:
+        return False
+    if not all(root.is_absolute() for root in roots):
+        return False
+    return any(_is_within(cwd, root) for root in roots) and _verification_scope_is_known(command, cwd, roots)
+
+
 def _event(name: str, args: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
     if name in WRITE_TOOLS and _is_workspace_write(args, payload):
         path = _workspace_relative_target(args, payload)
@@ -1560,6 +1701,10 @@ def _event(name: str, args: dict[str, Any], payload: dict[str, Any]) -> dict[str
         command = _command(args)
         kind, waiver, contains_mutation = _classify_command(command)
         behavioral = kind == EVIDENCE and _command_has_behavioral_evidence(command)
+        if kind == EVIDENCE and not _evidence_scope_is_known(command, args, payload):
+            # Reject evidence without losing writes earlier in the same chain.
+            kind = MUTATION if contains_mutation else NEUTRAL
+            behavioral = False
         # An ordered chain such as `formatter && static-check` still changes
         # runtime-facing files without exercising behavior. Preserve it as a
         # mutation so the static tail cannot hide the need for a real test.
@@ -1573,6 +1718,18 @@ def _event(name: str, args: dict[str, Any], payload: dict[str, Any]) -> dict[str
                 event["requiresBehavioral"] = True
             if behavioral:
                 event["behavioral"] = True
+                segments, _ = _tokens(command)
+                # Only a direct, foreground bundled adapter invocation has a
+                # native positive-count contract. Legacy runner recognition is
+                # retained, but its test count must not be reported as verified.
+                values = _strip_prefixes(segments[0]) if len(segments) == 1 else []
+                counted = (
+                    len(values) >= 3
+                    and re.fullmatch(r"python\d*(?:\.\d+)?", _executable(values[0]))
+                    and _is_counted_runner(values[1])
+                    and values[2] == "unittest"
+                )
+                event["testCountStatus"] = "runner-enforced" if counted else "unverified"
             if waiver:
                 event["waiverReason"] = waiver
             return event
@@ -1601,6 +1758,9 @@ def _apply_event(state: dict[str, Any], event: dict[str, Any], step: int) -> boo
             if not isinstance(previous_behavioral_write, int) or step > previous_behavioral_write:
                 state["lastBehavioralWriteStep"] = step
                 changed = True
+                previous_behavioral = state.get("lastBehavioralEvidenceStep")
+                if not isinstance(previous_behavioral, int) or previous_behavioral <= step:
+                    state.pop("testCountStatus", None)
         modified_path = event.get("modifiedPath")
         if isinstance(modified_path, str) and modified_path:
             paths = state.get("modifiedPaths")
@@ -1627,6 +1787,7 @@ def _apply_event(state: dict[str, Any], event: dict[str, Any], step: int) -> boo
             previous_behavioral = state.get("lastBehavioralEvidenceStep")
             if not isinstance(previous_behavioral, int) or step > previous_behavioral:
                 state["lastBehavioralEvidenceStep"] = step
+                state["testCountStatus"] = event.get("testCountStatus", "unverified")
                 changed = True
         if kind == WAIVER:
             previous_waiver = state.get("lastWaiverStep")
@@ -1762,7 +1923,10 @@ def _handle_stop(payload: dict[str, Any]) -> None:
                         "Workspace files changed in logic or unknown scope without later behavioral "
                         "verification. Run the smallest relevant unit, integration, or regression "
                         "test; a format, lint, type-check, or build-only command is not sufficient "
-                        f"for this scope. If no behavioral check can run, print `{NO_CHECK_MARKER} "
+                        "for this scope. Use an explicit workspace Cwd and in-scope test targets. "
+                        "Plain unittest/doctest can pass with zero tests: use the bundled "
+                        "scripts/verify_tests.py unittest adapter for a positive unittest count. "
+                        f"If no behavioral check can run, print `{NO_CHECK_MARKER} "
                         "<specific reason>` and report the limitation in the final response. This "
                         "gate retries once to avoid a loop."
                     )

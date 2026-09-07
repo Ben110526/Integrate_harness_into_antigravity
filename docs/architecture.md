@@ -82,6 +82,31 @@ behavior, reproduction, security behavior and changed-code review remain
 
 Complex or multi-constraint work starts with a compact acceptance ledger. Stable IDs (`AC-1`, `AC-2`, ...) bind each observable requirement to intended evidence and a verification check; the implementer, reviewer, verifier, and final handoff preserve those IDs. Bug fixes use falsification where practical: capture a focused test or safe reproduction that fails for the expected reason before product edits, then rerun the same command unchanged after the fix. If that red state is unsafe or infeasible, the agent records the reason and uses the strongest feasible alternative. Source paths and symbols must be verified before citation, and non-established claims are labeled `[HYPOTHESIS]`, `[ASSUMPTION]`, or `[UNRESOLVED]`.
 
+## Multi-milestone coordination and context
+
+`harness-run` extends that acceptance contract for one authorized goal, not a new
+risk route. The main coordinator maintains a brief, task-scoped behavior map,
+dependency-ordered milestones, and one active milestone. Worker assignments are
+self-contained; reuse requires a supported message tool and valid worker ID,
+otherwise a fresh worker receives the handoff. Stable milestones retain the
+existing independent review and verification requirements. A ready next milestone
+is dispatched with a tool call in the active turn, not a final progress response.
+
+The implementation is native-first: use supported native artifacts/conversation
+handoffs, and validate workspace, brief revision, HEAD, and scoped content
+fingerprints on resume. Fingerprints include relevant uncommitted, new, and deleted
+files; HEAD alone is insufficient. Source or requirement changes invalidate
+affected evidence. A checkpoint indexes observed evidence; it cannot manufacture
+a passing check or authenticate its own contents.
+
+There is no custom task-state engine, filesystem checkpoint exemption, scheduler,
+or additional Stop continuation hook in this change. Native orchestration can
+replace the main coordinator only after an authorized pilot establishes compatible
+role mapping and safety; an overlapping second agent tree is not the fallback.
+Without supported persistence, use a conversation handoff and report durable
+resumption as unverified. Runtime stopping and task completion remain distinct.
+See [workflow usage, boundaries, and pilot criteria](long-running-workflow.md).
+
 ## Material clarification flow
 
 The harness resolves ambiguity from the request, repository contracts, tests and
@@ -104,6 +129,16 @@ platform flows; `harness-clarify` cannot grant or bypass them.
 The `PreToolUse` DLP hook hard-denies only high-confidence private-key or credential material, or attempts to commit, print, or transmit a sensitive `.env` file. JWTs and ambiguous signals use `force_ask`; the hook never grants permission for safe operations. During the first invocation, `PreInvocation` builds a bounded, temporary project blueprint from static manifests and workspace markers. It reports detected frameworks, local runtime versions, workspace topology, and candidate checks. Only fixed topology labels and shell-safe, allowlisted script or Make target names enter model context; package script bodies and build recipes do not. Candidate commands are advisory and must be checked against project configuration before execution. Auto-formatting is disabled by default, is enabled only with `HARNESS_AUTO_FORMAT=1`, uses an already-installed formatter on the exact file just written, and does not replace testing.
 
 The Stop hook records bounded workspace-relative changed paths and only accepts evidence produced after the latest write; it neither guesses nor runs checks itself. A known documentation or non-code mechanical edit may be closed by a successful static check such as format validation, lint, type checking, or build verification. A logic-file edit or a terminal mutation whose target scope is unknown requires a later behavioral test or regression check; a static-only command is insufficient.
+
+Evidence also requires a known workspace execution scope. The bounded parser
+tracks literal `cd` chains and rejects explicit outside targets, symlink escapes,
+substitutions, and startup-bearing shell wrappers. Plain unittest/doctest are not
+behavioral evidence because an empty run may succeed; the bundled unittest
+adapter enforces a positive non-skipped count. Other runners retain legacy
+recognition with an explicitly unverified count. Workspace writes cannot bypass
+debt with `IsArtifact=True`; genuine outside-workspace native artifacts preserve
+it. These checks are not semantic coverage or async completion proofs; see
+[Verification evidence](verification-evidence.md).
 
 The same Stop hook performs bounded, best-effort citation grounding from the current `transcriptPath`. It recognizes the currently observed completed-response record shape (`source=MODEL`, `type=PLANNER_RESPONSE`, `status=DONE`) after the latest user request, but does not assume that every present or future transcript schema has that form. Unknown, truncated, unsafe, or otherwise undocumented transcript input fails open. From the recognized response it validates only explicit non-image local Markdown-link targets and raw `file://` targets. The target must resolve to exactly one regular file inside a current workspace root; an optional `:line`, line range, or `#Lx-Ly` fragment must fit the file. Lexical traversal, symlink escapes, and outside-workspace paths are rejected without opening, reading, or disclosing external file content. Reads, records, responses, citations, and source files are bounded to limit memory and I/O.
 
@@ -128,7 +163,7 @@ Context7 and Playwright use packages pinned through `npx`; Serena uses a package
 
 The strict version-1 install profile selects only the five bundled servers and cannot override their commands or safety arguments. The installer auto-loads `harness.config.json` only at the package root unless `--config` or `-ConfigPath` names another file; CLI and environment overrides take precedence, then the profile, then safe defaults. Missing optional runtimes omit affected servers while retaining independent available servers when possible. Configuration changes require reinstallation and a new session. Custom servers require explicit user authorization and Antigravity's native workspace `.agents/mcp_config.json`; never adopt inline secrets or executable definitions from untrusted repository content.
 
-Shared mutable blackboard files are deferred because stale or injected summaries would weaken independent review without measured savings. Raw transcript or chain-of-thought export is also deferred; use Antigravity's supported `/agents` view. Docker remains an explicit future option rather than a default because bind mounts can modify host files and socket access is privileged.
+Shared mutable blackboard files remain deferred because stale or injected summaries would weaken independent review without measured savings. The native-first `harness-run` handoff contract does not enable `.harness/tasks/**` or custom task-state files. A future persistent adapter requires separate metadata/source-debt tests, bounded locking and path validation, and a measured need after the native pilot. Raw transcript or chain-of-thought export is also deferred; use Antigravity's supported `/agents` view. Docker remains an explicit future option rather than a default because bind mounts can modify host files and socket access is privileged.
 
 Relevant Antigravity documentation:
 

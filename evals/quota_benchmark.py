@@ -20,7 +20,10 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 CASES_PATH = ROOT / "evals" / "cases.json"
 FIXTURES = ROOT / "evals" / "fixtures"
 SOURCE_PLUGIN = ROOT / "plugin" / "codex-claude-harness"
-BEHAVIOR_PATTERNS = ("rules/*.md", "agents/*.md", "skills/*/SKILL.md")
+BEHAVIOR_PATTERNS = (
+    "rules/*.md", "agents/*.md", "skills/*/SKILL.md",
+    "hooks.json", "scripts/*.py", "scripts/*.cmd",
+)
 USAGE_FIELDS = (
     "input_tokens",
     "output_tokens",
@@ -141,7 +144,7 @@ def safe_fixture_path(value: Any) -> pathlib.Path:
 
 
 def behavior_digest(plugin_root: pathlib.Path) -> str:
-    """Hash bounded policy, agent, and skill inputs without reading other config."""
+    """Hash bounded behavior and hook code, excluding user/MCP configuration."""
     if plugin_root.is_symlink() or not plugin_root.is_dir():
         raise BenchmarkError("harness behavior directory is unavailable or unsafe")
     root = plugin_root.resolve(strict=True)

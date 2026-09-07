@@ -8,6 +8,7 @@ import unittest
 
 from evals.quota_benchmark import (
     BenchmarkError,
+    behavior_digest,
     normalized_usage,
     require_response_contract,
     safe_fixture_path,
@@ -15,6 +16,9 @@ from evals.quota_benchmark import (
     workspace_snapshot,
 )
 from evals.validate_changed_paths import changed_path_error, diff_shape_error
+from evals.smoke_results import (
+    acceptance_results, prepare_user_changes, sample_result, user_changes_preserved,
+)
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -159,7 +163,7 @@ class EvalManifestTests(unittest.TestCase):
         self.assertIn("test_collapses_internal_spaces", baseline.stderr)
 
     def test_complex_route_covers_multi_component_security_and_persistence(self) -> None:
-        complex_cases = [case for case in self.cases if case["route"] == "COMPLEX_IMPLEMENT"]
+        complex_cases = [case for case in self.cases if case["id"] == "complex-security-persistence"]
         self.assertTrue(complex_cases)
         for case in complex_cases:
             with self.subTest(case=case["id"]):
@@ -194,6 +198,76 @@ class EvalManifestTests(unittest.TestCase):
                     pattern_index = command.index("--test-name-pattern") + 1
                     self.assertLess(pattern_index, len(command))
                     self.assertIn(command[pattern_index], test_sources)
+
+    def test_long_workflow_has_three_dependent_milestones_and_red_ac_checks(self) -> None:
+        case = next(case for case in self.cases if case["id"] == "long-workflow-intake")
+        self.assertTrue(case["workflow_pilot"])
+        self.assertEqual(case["route"], "COMPLEX_IMPLEMENT")
+        self.assertEqual(
+            [item["depends_on"] for item in case["milestones"]],
+            [[], ["M1"], ["M2"]],
+        )
+        self.assertEqual(
+            [item["acceptance_criteria"] for item in case["milestones"]],
+            [["AC-1"], ["AC-2"], ["AC-3"]],
+        )
+        results = acceptance_results(FIXTURES / case["fixture"], case)
+        self.assertEqual([item["id"] for item in results], ["AC-1", "AC-2", "AC-3"])
+        self.assertTrue(all(item["status"] == "failed" for item in results))
+
+    def test_workflow_metrics_do_not_hide_missing_ac_or_runner_assistance(self) -> None:
+        case = next(case for case in self.cases if case["id"] == "long-workflow-intake")
+        criteria = [{"id": f"AC-{index}", "status": "passed"} for index in (1, 2, 3)]
+        result = sample_result(case, "same-high-model", 0, 0, criteria, True, 1)
+        self.assertTrue(result["unassisted_completion"])
+        self.assertIsNone(result["permission_prompts"])
+        self.assertIsNone(result["native_resume_correct"])
+        assisted = sample_result(case, "same-high-model", 1, 0, criteria, True, 1)
+        self.assertTrue(assisted["outcome_pass"])
+        self.assertFalse(assisted["unassisted_completion"])
+        for partial in (criteria[:1], criteria[:2], []):
+            self.assertFalse(sample_result(case, "high", 0, 0, partial, True, 1)["outcome_pass"])
+        criteria[1]["status"] = "failed"
+        result = sample_result(case, "high", 0, 0, criteria, True, 1)
+        self.assertFalse(result["outcome_pass"])
+        self.assertEqual(result["ac_pass_count"], 2)
+
+    def test_behavior_digest_includes_gate_adapter_and_hook_registration(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            plugin = pathlib.Path(temp_dir) / "plugin"
+            shutil.copytree(ROOT / "plugin" / "codex-claude-harness", plugin)
+            original = behavior_digest(plugin)
+            for relative in ("scripts/verification_gate.py", "scripts/verify_tests.py", "hooks.json"):
+                with self.subTest(path=relative):
+                    path = plugin / relative
+                    before = path.read_bytes()
+                    path.write_bytes(before + b"\n")
+                    self.assertNotEqual(behavior_digest(plugin), original)
+                    path.write_bytes(before)
+            (plugin / "scripts" / ".python-runtime").write_text("/different/python\n", encoding="utf-8")
+            self.assertEqual(behavior_digest(plugin), original)
+
+    def test_workflow_preserves_seeded_dirty_user_file_and_rejects_symlinks(self) -> None:
+        case = next(case for case in self.cases if case["id"] == "long-workflow-intake")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = pathlib.Path(temp_dir) / "fixture"
+            shutil.copytree(FIXTURES / case["fixture"], workspace)
+            prepare_user_changes(workspace, case)
+            self.assertTrue(user_changes_preserved(workspace, case))
+            notes = workspace / "operator_notes.md"
+            notes.write_text("overwritten", encoding="utf-8")
+            self.assertFalse(user_changes_preserved(workspace, case))
+            notes.unlink()
+            self.assertFalse(user_changes_preserved(workspace, case))
+            outside = pathlib.Path(temp_dir) / "outside"
+            outside.write_text(case["preexisting_changes"]["operator_notes.md"], encoding="utf-8")
+            try:
+                notes.symlink_to(outside)
+            except (NotImplementedError, OSError):
+                self.skipTest("symlinks are unavailable on this platform")
+            self.assertFalse(user_changes_preserved(workspace, case))
+            with self.assertRaises(ValueError):
+                prepare_user_changes(workspace, case)
 
     def test_nonexistent_symbol_case_rejects_hallucinated_evidence(self) -> None:
         case = next(
@@ -690,6 +764,78 @@ print(json.dumps({"status": "SUCCESS", "conversation_id": "fake", "response": re
                 check=False,
             )
             self.assertEqual(accepted.returncode, 0, accepted.stderr)
+
+    def test_workflow_smoke_records_outcomes_and_explicit_quota_opt_in(self) -> None:
+        solutions = {
+            "parser.py": 'def parse_record(text):\n    item, quantity = text.split(",")\n    item = item.strip()\n    quantity = int(quantity)\n    if not item or quantity <= 0:\n        raise ValueError("invalid record")\n    return item, quantity\n',
+            "store.py": 'from parser import parse_record\n\ndef import_batch(records, inventory):\n    parsed = [parse_record(record) for record in records]\n    for item, quantity in parsed:\n        inventory[item] = inventory.get(item, 0) + quantity\n    return sum(quantity for _, quantity in parsed)\n',
+            "service.py": 'from store import import_batch\n\ndef intake_report(records, inventory):\n    units = import_batch(records, inventory)\n    return {"imported_units": units, "inventory": sorted(inventory.items())}\n',
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = pathlib.Path(temp_dir)
+            fake_home = temp / "home"
+            shutil.copytree(
+                ROOT / "plugin" / "codex-claude-harness",
+                fake_home / ".gemini" / "config" / "plugins" / "codex-claude-harness",
+            )
+            fake_agy = temp / "agy"
+            fake_agy.write_text(
+                "#!/usr/bin/env python3\nimport json, os, sys\nfrom pathlib import Path\n"
+                f"solutions = {solutions!r}\n"
+                'scenario = os.environ.get("FAKE_WORKFLOW", "pass")\n'
+                'marker = Path(os.environ["FAKE_CALL_MARKER"])\n'
+                'marker.write_bytes((marker.read_bytes() if marker.exists() else b"") + b"x")\n'
+                'if scenario == "cancelled":\n'
+                '    response = "Cancelled"\n'
+                'elif scenario == "assisted" and "--conversation" not in sys.argv:\n'
+                '    response = "Milestone work is pending"\n'
+                'else:\n'
+                '    for name, source in solutions.items():\n'
+                '        if scenario != "missing-ac" or name != "service.py":\n'
+                '            Path(name).write_text(source, encoding="utf-8")\n'
+                '    if scenario == "dirty":\n'
+                '        Path("operator_notes.md").write_text("overwritten", encoding="utf-8")\n'
+                '    response = "AC-1 AC-2 AC-3\\nHarness: COMPLEX_IMPLEMENT; passed: all; failed/skipped: none"\n'
+                'print(json.dumps({"status": "CANCELLED" if scenario == "cancelled" else "SUCCESS", "conversation_id": "fake", "response": response}))\n',
+                encoding="utf-8",
+            )
+            fake_agy.chmod(0o755)
+            marker = temp / "called"
+            metrics = temp / "metrics.ndjson"
+            environment = {
+                **os.environ, "PATH": f"{temp}{os.pathsep}{os.environ['PATH']}",
+                "HOME": str(fake_home), "USERPROFILE": str(fake_home),
+                "HARNESS_EVAL_CASE": "long-workflow-intake",
+                "HARNESS_EVAL_METRICS_PATH": str(metrics),
+                "HARNESS_EVAL_MAX_CONTINUATIONS": "1",
+                "FAKE_CALL_MARKER": str(marker),
+            }
+            environment.pop("HARNESS_EVAL_CONFIRM_QUOTA_USE", None)
+            command = ["bash", str(ROOT / "evals" / "run-smoke.sh")]
+            refused = subprocess.run(command, cwd=ROOT, env=environment, capture_output=True, text=True, timeout=30)
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("HARNESS_EVAL_CONFIRM_QUOTA_USE=1", refused.stderr)
+            self.assertFalse(marker.exists())
+            environment["HARNESS_EVAL_CONFIRM_QUOTA_USE"] = "1"
+            for scenario in ("pass", "missing-ac", "dirty", "assisted", "cancelled"):
+                with self.subTest(scenario=scenario):
+                    environment["FAKE_WORKFLOW"] = scenario
+                    before_calls = len(marker.read_bytes()) if marker.exists() else 0
+                    completed = subprocess.run(
+                        command, cwd=ROOT, env=environment, capture_output=True,
+                        text=True, timeout=30,
+                    )
+                    sample = json.loads(metrics.read_text(encoding="utf-8").splitlines()[-1])
+                    self.assertEqual(completed.returncode == 0, scenario in {"pass", "assisted"}, completed.stderr)
+                    self.assertEqual(sample["outcome_pass"], scenario in {"pass", "assisted"})
+                    self.assertEqual(sample["unassisted_completion"], scenario == "pass")
+                    self.assertEqual(sample["runner_continuations"], int(scenario == "assisted"))
+                    self.assertEqual(len(marker.read_bytes()) - before_calls, 2 if scenario == "assisted" else 1)
+                    self.assertEqual(sample["preexisting_changes_preserved"], scenario != "dirty")
+                    self.assertEqual(len(sample["acceptance"]), 3)
+                    if scenario == "missing-ac":
+                        self.assertEqual(sample["ac_pass_count"], 2)
+                        self.assertFalse(sample["all_required_ac_verified"])
 
     def test_changed_path_contract_rejects_test_or_manifest_edits(self) -> None:
         required = {"src/policy.mjs", "src/store.mjs"}

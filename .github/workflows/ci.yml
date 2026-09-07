@@ -23,7 +23,7 @@ jobs:
         run: ./tests/test-source.sh
 
       - name: Run lifecycle and verification hook tests
-        run: python3 -m unittest -v tests/test_verification_gate.py tests/test_lifecycle_guard.py
+        run: python3 -m unittest -v tests/test_verification_gate.py tests/test_lifecycle_guard.py tests/test_verify_tests.py
 
       - name: Run ShellCheck
         run: shellcheck install.sh doctor.sh install.command scripts/update-checksums.sh tests/test-source.sh evals/run-smoke.sh
@@ -62,12 +62,12 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           ./tests/test-source.sh
-          python3 -m unittest -v tests/test_verification_gate.py tests/test_lifecycle_guard.py
+          python3 -m unittest -v tests/test_verification_gate.py tests/test_lifecycle_guard.py tests/test_verify_tests.py
 
       - name: Run Windows lifecycle and verification hook tests
         if: runner.os == 'Windows'
         shell: pwsh
-        run: python -m unittest -v tests/test_verification_gate.py tests/test_lifecycle_guard.py
+        run: python -m unittest -v tests/test_verification_gate.py tests/test_lifecycle_guard.py tests/test_verify_tests.py
 
       - name: Run Windows installer fixture checks
         if: runner.os == 'Windows'

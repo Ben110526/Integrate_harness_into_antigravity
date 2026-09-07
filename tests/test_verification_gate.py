@@ -504,10 +504,32 @@ class VerificationGateTests(unittest.TestCase):
         self.post(
             1,
             "write_to_file",
-            {"TargetFile": str(self.workspace / "report.md"), "IsArtifact": True},
+            {"TargetFile": str(self.artifacts / "report.md"), "IsArtifact": True},
         )
         self.write(step=2, target=Path(self.temporary.name) / "outside.py")
         self.assertEqual(self.stop(), {"decision": "allow"})
+
+    def test_native_artifact_checkpoint_preserves_evidence_and_retry_count(self) -> None:
+        self.write()
+        self.command(2, "pytest -q")
+        state_path = self.artifacts / GATE_MODULE.STATE_FILE
+        before = state_path.read_bytes()
+        self.post(3, "write_to_file", {
+            "TargetFile": str(self.artifacts / "task-handoff.md"), "IsArtifact": True,
+        })
+        self.assertEqual(state_path.read_bytes(), before)
+        self.assertEqual(self.stop()["decision"], "allow")
+
+    def test_workspace_metadata_and_artifact_flag_are_not_blanket_exemptions(self) -> None:
+        for target in (".harness/tasks/demo/state.json", ".harness/config.json", ".harness/test_task.py"):
+            with self.subTest(target=target):
+                (self.artifacts / GATE_MODULE.STATE_FILE).unlink(missing_ok=True)
+                self.write()
+                self.command(2, "pytest -q")
+                self.post(3, "write_to_file", {
+                    "TargetFile": str(self.workspace / target), "IsArtifact": True,
+                })
+                self.assertEqual(self.stop()["decision"], "continue")
 
     def test_failed_write_conservatively_requires_verification(self) -> None:
         self.post(
@@ -566,14 +588,13 @@ class VerificationGateTests(unittest.TestCase):
         self.assertEqual(state["modifiedPaths"], ["src/auth.py"])
         self.assertNotIn(str(self.workspace), json.dumps(state))
 
-    def test_python_unittest_module_is_evidence(self) -> None:
+    def test_python_unittest_without_count_does_not_close_behavioral_debt(self) -> None:
         self.write()
         self.command(2, "python -m unittest discover")
-        self.assertEqual(self.stop(), {"decision": "allow"})
+        self.assertEqual(self.stop()["decision"], "continue")
 
     def test_additional_test_runners_are_evidence(self) -> None:
         commands = (
-            "python -m doctest README.md",
             "python -m twisted.trial package.tests",
             "pytest-bdd tests/features",
             "npx vitest run",
@@ -594,7 +615,7 @@ class VerificationGateTests(unittest.TestCase):
     def test_coverage_requires_a_verification_target(self) -> None:
         accepted = (
             "coverage run -m pytest -q",
-            "python -m coverage run --branch -m unittest discover",
+            "python -m coverage run --branch -m pytest",
             "coverage run --source src tests/test_app.py",
             "coverage run --rcfile=test_config.py -m pytest",
         )
@@ -938,6 +959,194 @@ class VerificationGateTests(unittest.TestCase):
             },
         )
         self.assertEqual(self.stop()["decision"], "continue")
+
+    def test_outside_and_opaque_execution_scope_cannot_close_debt(self) -> None:
+        outside = self.base / "outside"
+        outside.mkdir()
+        commands = (
+            f"cd {_shell_quote(str(outside))} && pytest -q",
+            f"bash -c 'cd {_shell_quote(str(outside))} && pytest -q'",
+            "cd ../outside && python -m unittest -q",
+            "env -C ../outside pytest -q",
+            "pushd ../outside && pytest -q",
+            "Set-Location ../outside && pytest -q",
+            "npm --prefix ../outside test",
+            "npm test -- --root=../outside",
+            "pytest ../outside/test_app.py",
+            "pytest --rootdir=../outside",
+            "pytest -c ../outside/pytest.ini",
+            "pytest -c../outside/pytest.ini",
+            f"{_shell_quote(str(outside / 'test_suite.sh'))}",
+            "cd \"$CHECK_ROOT\" && pytest -q",
+            "pytest $(pwd)/test_app.py",
+            "PYTHONPATH=../outside pytest -q",
+            "env PYTHONPATH=inside:../outside pytest -q",
+            "bash --rcfile ../outside/init.sh -i -c 'pytest -q'",
+            "bash -lc 'pytest -q'",
+            "BASH_ENV=init.sh bash -c 'pytest -q'",
+            "pwsh -Command 'pytest -q'",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                (self.artifacts / GATE_MODULE.STATE_FILE).unlink(missing_ok=True)
+                self.write()
+                self.command(2, command)
+                self.assertEqual(self.stop()["decision"], "continue")
+
+    def test_literal_workspace_subdirectory_can_verify(self) -> None:
+        (self.workspace / "package with spaces").mkdir()
+        for command in (
+            "cd 'package with spaces' && pytest -q",
+            "bash -c \"cd 'package with spaces' && pytest -q\"",
+        ):
+            with self.subTest(command=command):
+                (self.artifacts / GATE_MODULE.STATE_FILE).unlink(missing_ok=True)
+                self.write()
+                self.command(2, command)
+                self.assertEqual(self.stop()["decision"], "allow")
+
+    def test_scope_rejection_preserves_mutation_in_chain(self) -> None:
+        self.write()
+        self.command(2, "pytest -q")
+        self.command(3, "prettier --write src && cd ../outside && pytest -q")
+        self.assertEqual(self.stop()["decision"], "continue")
+
+    def test_plain_zero_test_capable_python_runners_need_counted_adapter(self) -> None:
+        for command in (
+            "python -m unittest -q", "python -m doctest README.md",
+            "coverage run -m unittest discover",
+            "python -m coverage run -m unittest discover",
+        ):
+            with self.subTest(command=command):
+                (self.artifacts / GATE_MODULE.STATE_FILE).unlink(missing_ok=True)
+                self.write()
+                self.command(2, command)
+                self.assertEqual(self.stop()["decision"], "continue")
+
+    def test_symlink_scope_escape_cannot_verify(self) -> None:
+        outside = self.base / "outside"
+        outside.mkdir()
+        try:
+            (self.workspace / "linked").symlink_to(outside, target_is_directory=True)
+        except OSError:
+            self.skipTest("directory symlinks are unavailable")
+        self.write()
+        self.command(2, "cd linked && pytest -q")
+        self.assertEqual(self.stop()["decision"], "continue")
+
+    def test_unresolved_shell_patterns_cannot_hide_symlink_scope_escape(self) -> None:
+        outside = self.base / "outside"
+        outside.mkdir()
+        (outside / "test_app.py").touch()
+        (self.workspace / "tests").mkdir()
+        try:
+            (self.workspace / "tests" / "external").symlink_to(outside, target_is_directory=True)
+        except OSError:
+            self.skipTest("directory symlinks are unavailable")
+        for command in (
+            "pytest tests/*/test_app.py", "pytest tests/?xternal/test_app.py",
+            "pytest tests/[e]xternal/test_app.py", "pytest tests/{external,local}/test_app.py",
+            "pytest tests/@(external)/test_app.py", "pytest ~-/test_app.py",
+            "bash -c 'pytest tests/*/test_app.py'",
+        ):
+            with self.subTest(command=command):
+                (self.artifacts / GATE_MODULE.STATE_FILE).unlink(missing_ok=True)
+                self.write()
+                self.command(2, command)
+                self.assertEqual(self.stop()["decision"], "continue")
+
+    def test_pattern_scope_rejection_keeps_mutation_debt(self) -> None:
+        self.write()
+        self.command(2, "pytest -q")
+        self.command(3, "prettier --write src && pytest tests/*/test_app.py")
+        self.assertEqual(self.stop()["decision"], "continue")
+
+    def test_real_unittest_empty_run_stays_unverified_without_tool_result(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-m", "unittest", "-q"], cwd=self.workspace,
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("Ran 0 tests", result.stderr)
+        self.write()
+        self.command(2, "python -m unittest -q")
+        self.assertEqual(self.stop()["decision"], "continue")
+
+    def test_counted_unittest_adapter_integrates_through_exit_status_only(self) -> None:
+        runner = GATE.with_name("verify_tests.py")
+        command = f"{_shell_quote(sys.executable)} {_shell_quote(str(runner))} unittest -q"
+        for source, expected in (
+            ("", "continue"),
+            ("import unittest\nclass T(unittest.TestCase):\n def test_ok(self): self.assertTrue(True)\n", "allow"),
+            ("import unittest\nclass T(unittest.TestCase):\n def test_bad(self): self.fail('regression')\n", "continue"),
+        ):
+            with self.subTest(expected=expected, empty=not source):
+                (self.artifacts / GATE_MODULE.STATE_FILE).unlink(missing_ok=True)
+                (self.workspace / "test_app.py").write_text(source, encoding="utf-8")
+                self.write()
+                result = subprocess.run(
+                    [sys.executable, str(runner), "unittest", "-q"], cwd=self.workspace,
+                    capture_output=True, text=True, check=False,
+                    env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                )
+                error = f"exit status {result.returncode}" if result.returncode else ""
+                self.command(2, command, error=error)
+                self.assertEqual(self.stop()["decision"], expected)
+                if expected == "allow":
+                    state = json.loads((self.artifacts / GATE_MODULE.STATE_FILE).read_text())
+                    self.assertEqual(state["testCountStatus"], "runner-enforced")
+
+    def test_count_summary_text_and_same_named_script_are_not_counted_evidence(self) -> None:
+        self.write()
+        self.command(2, "python ./verify_tests.py unittest -q")
+        self.assertEqual(self.stop()["decision"], "continue")
+        event = GATE_MODULE._event("run_command", {
+            "CommandLine": "pytest -q", "Cwd": str(self.workspace),
+        }, self.common)
+        self.assertEqual(event["testCountStatus"], "unverified")
+        self.command(3, "echo 'HARNESS_TEST_SUMMARY tests_run=5 executed=5 status=passed'")
+        self.assertNotIn("lastBehavioralEvidenceStep", json.loads(
+            (self.artifacts / GATE_MODULE.STATE_FILE).read_text()
+        ))
+
+    def test_explicit_outside_pythonpath_cannot_turn_adapter_into_evidence(self) -> None:
+        outside = self.base / "outside"
+        outside.mkdir()
+        (outside / "outside_test.py").write_text(
+            "import unittest\nclass T(unittest.TestCase):\n def test_ok(self): pass\n",
+            encoding="utf-8",
+        )
+        runner = GATE.with_name("verify_tests.py")
+        result = subprocess.run(
+            [sys.executable, str(runner), "unittest", "outside_test", "-q"],
+            cwd=self.workspace, capture_output=True, text=True,
+            env={**os.environ, "PYTHONPATH": str(outside)},
+        )
+        self.assertEqual(result.returncode, 0)
+        self.write()
+        self.command(2, f"PYTHONPATH={_shell_quote(str(outside))} python {_shell_quote(str(runner))} unittest outside_test -q")
+        self.assertEqual(self.stop()["decision"], "continue")
+
+    def test_missing_cwd_or_workspace_cannot_supply_evidence(self) -> None:
+        for extra in ({"Cwd": ""}, {"Cwd": "."}, {"Cwd": str(self.base / "missing")}):
+            with self.subTest(extra=extra):
+                event = GATE_MODULE._event("run_command", {"CommandLine": "pytest -q", **extra}, self.common)
+                self.assertNotEqual(event.get("kind"), GATE_MODULE.EVIDENCE)
+        event = GATE_MODULE._event("run_command", {
+            "CommandLine": "pytest -q", "Cwd": str(self.workspace),
+        }, {**self.common, "workspacePaths": []})
+        self.assertNotEqual(event.get("kind"), GATE_MODULE.EVIDENCE)
+
+    def test_source_write_invalidates_runner_count_label(self) -> None:
+        state = {}
+        GATE_MODULE._apply_event(state, {"kind": GATE_MODULE.EVIDENCE,
+            "behavioral": True, "testCountStatus": "runner-enforced"}, 10)
+        GATE_MODULE._apply_event(state, {"kind": GATE_MODULE.MUTATION,
+            "requiresBehavioral": True}, 5)
+        self.assertEqual(state["testCountStatus"], "runner-enforced")
+        GATE_MODULE._apply_event(state, {"kind": GATE_MODULE.MUTATION,
+            "requiresBehavioral": True}, 11)
+        self.assertNotIn("testCountStatus", state)
 
     def test_explicit_no_check_reason_allows_stop(self) -> None:
         self.write()

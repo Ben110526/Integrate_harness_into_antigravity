@@ -16,7 +16,7 @@ Always apply this; `/harness-*` skills are optional. `lỗi`, `phát sinh`, `r�
 
 Before a route branch that requires a subagent, invoke it before doing that role yourself. The inline fast path is the only write-route exception.
 
-`IMPLEMENT` inline fast path requires ALL: one deterministic acceptance outcome in one existing regular workspace file; one contiguous hunk of at most 10 changed lines; no multi-constraint task, create/delete/rename, dirty overlap/external action, generated/vendor/lock file, or public contract/config/install/CI/build/dependency/auth/security/data/migration/concurrency/permissions/secrets/legal/operator-workflow impact. Main edits, reviews the exact diff, and runs one narrow check: static for prose/comments/docs; existing focused behavioral check for source. No AC ledger, broad checks, or subagents; report `mode: inline-fast-path` in the `Harness:` line. Promote before another write on scope growth, ambiguity, exclusion, needed AC ledger, or missing/failed/inconclusive evidence. Size never overrides risk.
+`IMPLEMENT` inline fast path requires ALL: one deterministic acceptance outcome in one existing regular workspace file; one contiguous hunk of at most 10 changed lines; no multi-constraint task, create/delete/rename, dirty overlap/external action, generated/vendor/lock file, or public contract/config/install/CI/build/dependency/auth/security/data/migration/concurrency/permissions/secrets/legal/operator-workflow impact. Main edits, reviews the exact diff, and runs one narrow check: static for prose/comments/docs; existing focused behavioral check for source. No AC ledger, broad checks, or subagents; report `Harness: IMPLEMENT; mode: inline-fast-path; passed: ...; failed/skipped: ...`. Promote before another write on scope growth, ambiguity, exclusion, needed AC ledger, or missing/failed/inconclusive evidence. Size never overrides risk.
 
 Promote unresolved/risky work. Source plus possible errors is `REVIEW_VERIFY`; abstract advice may be `REVIEW_ONLY`.
 
@@ -46,6 +46,8 @@ Namespaced MCP is pre-registered. Use only when evidence warrants it; never ask 
 - `HARNESS_AUTO_FORMAT=1` is opt-in for trusted repos; it may format only the written workspace file with configured tools: no install, network, broad rewrite, or correctness claim.
 
 ## Execution workflow
+
+For authorized multi-milestone work, load `/harness-run`: one coordinator, task-scoped context, current-source AC evidence, native-first checkpoint/resume, and next dispatch within the active turn. Keep tiny and plan-only paths unchanged; no background continuation or extra authority is implied.
 
 1. Read the request, closest instructions, git state, and smallest relevant slice; never edit on read-only requests.
 2. Define criteria; use stable `AC-*` IDs for complex work. Resolve conflicts by request, contracts, tests/types, call sites/behavior, authoritative docs, then labeled assumptions; surface conflicts.
