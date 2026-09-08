@@ -8,6 +8,7 @@ installs tools and cannot block an otherwise successful write.
 
 from __future__ import annotations
 
+import ast
 import base64
 from contextlib import contextmanager
 import hashlib
@@ -34,6 +35,11 @@ MAX_SCAN_CHARS = 256 * 1024
 MAX_MANIFEST_BYTES = 256 * 1024
 MAX_GIT_OUTPUT_BYTES = 512 * 1024
 MAX_CONTEXT_BYTES = 1024
+MAX_SOURCE_FILE_BYTES = 32 * 1024
+MAX_TOTAL_SCAN_BYTES = 256 * 1024
+MAX_SCANNED_ENTRIES = 150
+MAX_PYTHON_FILES = 15
+MAX_SCAN_DEPTH = 3
 COMMAND_TIMEOUT_SECONDS = 3.0
 FORMAT_TIMEOUT_SECONDS = 5.0
 LOCK_WAIT_SECONDS = 0.1
@@ -43,6 +49,45 @@ FORMAT_LOCK_TTL_SECONDS = 48 * 60 * 60
 _FORMAT_LOCK_NAME = re.compile(
     r"^%s[0-9a-f]{24}\.lock$" % re.escape(FORMAT_LOCK_PREFIX)
 )
+
+_IGNORED_SCAN_DIRS = {
+    ".git",
+    ".venv",
+    "venv",
+    "env",
+    "__pycache__",
+    "site-packages",
+    "build",
+    "dist",
+    ".tox",
+    ".nox",
+    ".pytest_cache",
+    ".mypy_cache",
+    "node_modules",
+    "vendor",
+    ".idea",
+    ".vscode",
+}
+
+_ROOT_CANDIDATE_NAMES = {
+    "main.py",
+    "app.py",
+    "server.py",
+    "manage.py",
+    "wsgi.py",
+    "asgi.py",
+    "run.py",
+}
+
+_TARGET_DIR_NAMES = {
+    "api",
+    "models",
+    "routes",
+    "views",
+    "controllers",
+    "handlers",
+    "src",
+}
 
 _PRIVATE_KEY_HEADER = re.compile(
     r"-----BEGIN (?:(?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY|"
@@ -947,6 +992,596 @@ def _runtime_version(
     return match.group(1) if match.lastindex else match.group(0)
 
 
+class _SourceCandidate:
+    __slots__ = ("category", "symbol", "path", "lineno")
+
+    def __init__(self, category: str, symbol: str, path: str, lineno: int) -> None:
+        self.category = category
+        self.symbol = symbol
+        self.path = path
+        self.lineno = lineno
+
+    def format_item(self) -> str:
+        if self.symbol:
+            return "%s:%s:%d" % (self.symbol, self.path, self.lineno)
+        return "%s:%d" % (self.path, self.lineno)
+
+
+def _is_safe_dir_fd_supported() -> bool:
+    if os.open not in getattr(os, "supports_dir_fd", ()):
+        return False
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_NONBLOCK"):
+        return False
+    return True
+
+
+def _is_safe_identifier(name: str) -> bool:
+    if not name:
+        return True
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]{0,128}$", name):
+        return False
+    if _high_confidence_category(name) is not None or _has_ambiguous_secret(name):
+        return False
+    return True
+
+
+def _is_safe_path(path: str) -> bool:
+    if not path or len(path) > 256:
+        return False
+    if re.search(r"[`\x00-\x1f\x7f]|\.\.", path):
+        return False
+    if not re.match(r"^[A-Za-z0-9_./-]+$", path):
+        return False
+    if _high_confidence_category(path) is not None or _has_ambiguous_secret(path):
+        return False
+    return True
+
+
+def _class_bases(node: ast.ClassDef) -> List[str]:
+    bases: List[str] = []
+    for b in node.bases:
+        if isinstance(b, ast.Name):
+            bases.append(b.id)
+        elif isinstance(b, ast.Attribute):
+            bases.append(b.attr)
+    return bases
+
+
+def _has_dataclass_decorator(node: ast.ClassDef) -> bool:
+    for d in node.decorator_list:
+        if isinstance(d, ast.Call):
+            d = d.func
+        if isinstance(d, ast.Name) and "dataclass" in d.id.lower():
+            return True
+        if isinstance(d, ast.Attribute) and "dataclass" in d.attr.lower():
+            return True
+    return False
+
+
+def _has_route_decorator(node: Any) -> bool:
+    route_methods = {
+        "get",
+        "post",
+        "put",
+        "delete",
+        "patch",
+        "route",
+        "api_route",
+        "head",
+        "options",
+        "websocket",
+    }
+    for d in node.decorator_list:
+        if isinstance(d, ast.Call):
+            d = d.func
+        attr = None
+        if isinstance(d, ast.Attribute):
+            attr = d.attr
+        elif isinstance(d, ast.Name):
+            attr = d.id
+        if attr and (
+            attr.lower() in route_methods
+            or "route" in attr.lower()
+            or "endpoint" in attr.lower()
+            or "handler" in attr.lower()
+        ):
+            return True
+    return False
+
+
+def _extract_candidates_from_tree(
+    tree: ast.AST,
+    rel_path: str,
+    candidates: Dict[str, List[_SourceCandidate]],
+) -> None:
+    if not _is_safe_path(rel_path):
+        return
+
+    path_parts = set(re.split(r"[/\\]", rel_path.lower()))
+    is_model_path = bool(
+        path_parts & {"models", "model", "schema", "schemas", "entities", "entity"}
+    ) or rel_path.lower().endswith(
+        ("_model.py", "_schema.py", "models.py", "schema.py")
+    )
+    is_handler_path = bool(
+        path_parts & {"api", "routes", "views", "controllers", "handlers", "endpoints"}
+    ) or rel_path.lower().endswith(
+        (
+            "_view.py",
+            "_handler.py",
+            "_endpoint.py",
+            "views.py",
+            "routes.py",
+            "handlers.py",
+            "endpoints.py",
+        )
+    )
+
+    main_guard_lineno: Optional[int] = None
+    main_func_node: Optional[ast.AST] = None
+    app_init_node: Optional[Tuple[str, int]] = None
+
+    for node in getattr(tree, "body", []):
+        if isinstance(node, ast.If):
+            test = node.test
+            if (
+                isinstance(test, ast.Compare)
+                and len(test.ops) == 1
+                and isinstance(test.ops[0], ast.Eq)
+            ):
+                left, right = test.left, test.comparators[0]
+                is_main = False
+                if isinstance(left, ast.Name) and left.id == "__name__":
+                    if (
+                        isinstance(right, ast.Constant)
+                        and right.value == "__main__"
+                    ) or (
+                        isinstance(right, getattr(ast, "Str", ()))
+                        and getattr(right, "s", "") == "__main__"
+                    ):
+                        is_main = True
+                elif isinstance(right, ast.Name) and right.id == "__name__":
+                    if (
+                        isinstance(left, ast.Constant)
+                        and left.value == "__main__"
+                    ) or (
+                        isinstance(left, getattr(ast, "Str", ()))
+                        and getattr(left, "s", "") == "__main__"
+                    ):
+                        is_main = True
+                if is_main and main_guard_lineno is None:
+                    main_guard_lineno = node.lineno
+
+        elif isinstance(node, ast.ClassDef):
+            if not _is_safe_identifier(node.name):
+                continue
+            if node.name.startswith("_") or node.name.startswith("Test"):
+                continue
+            bases = _class_bases(node)
+            is_view = any(
+                b in {"View", "APIView", "ViewSet", "Resource"} for b in bases
+            )
+            is_model = (
+                is_model_path
+                or _has_dataclass_decorator(node)
+                or any(
+                    b
+                    in {
+                        "Model",
+                        "BaseModel",
+                        "Base",
+                        "SQLModel",
+                        "Document",
+                        "Entity",
+                        "Table",
+                    }
+                    for b in bases
+                )
+                or node.name.endswith(("Model", "Schema", "Entity"))
+            )
+            if is_view or (is_handler_path and "view" in node.name.lower()):
+                candidates["handlers"].append(
+                    _SourceCandidate("handlers", node.name, rel_path, node.lineno)
+                )
+            elif is_model:
+                candidates["models"].append(
+                    _SourceCandidate("models", node.name, rel_path, node.lineno)
+                )
+
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if not _is_safe_identifier(node.name):
+                continue
+            if node.name.startswith("_") or node.name.startswith("test_"):
+                continue
+
+            if node.name in {"main", "cli"} and main_func_node is None:
+                main_func_node = node
+                continue
+
+            is_route = _has_route_decorator(node)
+            if (
+                is_route
+                or is_handler_path
+                or node.name.endswith(("_handler", "_endpoint", "_view"))
+                or node.name.startswith("handle_")
+            ):
+                candidates["handlers"].append(
+                    _SourceCandidate("handlers", node.name, rel_path, node.lineno)
+                )
+
+        elif isinstance(node, ast.Assign):
+            if app_init_node is None and isinstance(node.value, ast.Call):
+                call_name = ""
+                if isinstance(node.value.func, ast.Name):
+                    call_name = node.value.func.id
+                elif isinstance(node.value.func, ast.Attribute):
+                    call_name = node.value.func.attr
+                if call_name in {
+                    "FastAPI",
+                    "Flask",
+                    "Quart",
+                    "Sanic",
+                    "Starlette",
+                    "Litestar",
+                    "Bottle",
+                    "Application",
+                    "get_wsgi_application",
+                    "get_asgi_application",
+                }:
+                    for target in node.targets:
+                        if isinstance(target, ast.Name) and _is_safe_identifier(target.id):
+                            app_init_node = (target.id, node.lineno)
+                            break
+
+    if main_guard_lineno is not None:
+        candidates["entrypoints"].append(
+            _SourceCandidate("entrypoints", "", rel_path, main_guard_lineno)
+        )
+    elif main_func_node is not None:
+        candidates["entrypoints"].append(
+            _SourceCandidate(
+                "entrypoints",
+                getattr(main_func_node, "name", "main"),
+                rel_path,
+                main_func_node.lineno,
+            )
+        )
+    elif app_init_node is not None:
+        candidates["entrypoints"].append(
+            _SourceCandidate(
+                "entrypoints",
+                app_init_node[0],
+                rel_path,
+                app_init_node[1],
+            )
+        )
+
+
+def _dedupe_candidates(candidates: List[_SourceCandidate]) -> List[_SourceCandidate]:
+    seen = set()
+    result = []
+    for c in candidates:
+        key = (c.category, c.symbol, c.path, c.lineno)
+        if key not in seen:
+            seen.add(key)
+            result.append(c)
+    return result
+
+
+def _collect_source_candidates(
+    roots: Sequence[Path],
+    stats: Optional[Dict[str, int]] = None,
+) -> Dict[str, List[_SourceCandidate]]:
+    candidates: Dict[str, List[_SourceCandidate]] = {
+        "entrypoints": [],
+        "models": [],
+        "handlers": [],
+    }
+    if not _is_safe_dir_fd_supported():
+        if stats is not None:
+            stats["scanned_entries"] = 0
+            stats["files_parsed"] = 0
+            stats["files_processed"] = 0
+            stats["bytes_scanned"] = 0
+        return candidates
+
+    scanned_entries = 0
+    priority_1_files: List[Tuple[Path, Tuple[str, ...], str, str]] = []
+    priority_2_files: List[Tuple[Path, Tuple[str, ...], str, str]] = []
+    priority_3_files: List[Tuple[Path, Tuple[str, ...], str, str]] = []
+
+    root_fds: Dict[Path, int] = {}
+
+    try:
+        for root in roots:
+            if scanned_entries >= MAX_SCANNED_ENTRIES:
+                break
+            if root.is_symlink() or not root.is_dir():
+                continue
+            try:
+                root_fd = os.open(str(root), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            except OSError:
+                continue
+            root_fds[root] = root_fd
+
+            queue: List[Tuple[Tuple[str, ...], int, bool]] = [((), 0, False)]
+            while queue and scanned_entries < MAX_SCANNED_ENTRIES:
+                parent_components, depth, in_target_dir = queue.pop(0)
+                scan_fd: Optional[int] = None
+                fds_to_close: List[int] = []
+                try:
+                    current_dir_fd = root_fd
+                    for comp in parent_components:
+                        current_dir_fd = os.open(
+                            comp,
+                            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                            dir_fd=current_dir_fd,
+                        )
+                        fds_to_close.append(current_dir_fd)
+                    scan_fd = os.dup(current_dir_fd)
+                except OSError:
+                    continue
+                finally:
+                    for fd_val in reversed(fds_to_close):
+                        try:
+                            os.close(fd_val)
+                        except OSError:
+                            pass
+
+                try:
+                    st = os.fstat(scan_fd)
+                    if not stat.S_ISDIR(st.st_mode):
+                        continue
+                    with os.scandir(scan_fd) as it:
+                        subdirs_target: List[Tuple[Tuple[str, ...], int, bool]] = []
+                        subdirs_other: List[Tuple[Tuple[str, ...], int, bool]] = []
+                        for entry in it:
+                            if scanned_entries >= MAX_SCANNED_ENTRIES:
+                                break
+                            scanned_entries += 1
+                            try:
+                                if entry.is_symlink():
+                                    continue
+                                if entry.is_dir():
+                                    if (
+                                        entry.name in _IGNORED_SCAN_DIRS
+                                        or entry.name.startswith(".")
+                                    ):
+                                        continue
+                                    if depth < MAX_SCAN_DEPTH:
+                                        child_components = parent_components + (entry.name,)
+                                        is_target = (
+                                            depth == 0 and entry.name in _TARGET_DIR_NAMES
+                                        )
+                                        if is_target:
+                                            subdirs_target.append(
+                                                (child_components, depth + 1, True)
+                                            )
+                                        else:
+                                            subdirs_other.append(
+                                                (
+                                                    child_components,
+                                                    depth + 1,
+                                                    in_target_dir
+                                                    or entry.name in _TARGET_DIR_NAMES,
+                                                )
+                                            )
+                                elif entry.is_file():
+                                    if entry.name.endswith(".py"):
+                                        rel_posix = "/".join(
+                                            parent_components + (entry.name,)
+                                        )
+                                        rel_path = (
+                                            "%s/%s" % (root.name, rel_posix)
+                                            if len(roots) > 1
+                                            else rel_posix
+                                        )
+                                        item = (
+                                            root,
+                                            parent_components,
+                                            entry.name,
+                                            rel_path,
+                                        )
+                                        if (
+                                            depth == 0
+                                            and entry.name in _ROOT_CANDIDATE_NAMES
+                                        ):
+                                            priority_1_files.append(item)
+                                        elif depth == 1 and in_target_dir:
+                                            priority_2_files.append(item)
+                                        else:
+                                            priority_3_files.append(item)
+                            except OSError:
+                                continue
+                        queue.extend(subdirs_target)
+                        queue.extend(subdirs_other)
+                except OSError:
+                    continue
+                finally:
+                    if scan_fd is not None:
+                        try:
+                            os.close(scan_fd)
+                        except OSError:
+                            pass
+
+        candidate_files = priority_1_files + priority_2_files + priority_3_files
+        total_python_files_processed = 0
+        total_bytes_scanned = 0
+
+        for root, parent_components, filename, rel_path in candidate_files:
+            if total_python_files_processed >= MAX_PYTHON_FILES:
+                break
+            if total_bytes_scanned >= MAX_TOTAL_SCAN_BYTES:
+                break
+
+            remaining_scan_bytes = MAX_TOTAL_SCAN_BYTES - total_bytes_scanned
+            if remaining_scan_bytes <= 0:
+                break
+
+            root_fd = root_fds.get(root)
+            if root_fd is None:
+                continue
+
+            to_read = min(MAX_SOURCE_FILE_BYTES + 1, remaining_scan_bytes)
+            raw_bytes = b""
+            bytes_read = 0
+            reached_eof = False
+            fds_to_close: List[int] = []
+            try:
+                current_fd = root_fd
+                for comp in parent_components:
+                    current_fd = os.open(
+                        comp,
+                        os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                        dir_fd=current_fd,
+                    )
+                    fds_to_close.append(current_fd)
+                fd = os.open(
+                    filename,
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                    dir_fd=current_fd,
+                )
+                fds_to_close.append(fd)
+                st = os.fstat(fd)
+                if not stat.S_ISREG(st.st_mode):
+                    continue
+                chunks: List[bytes] = []
+                while bytes_read < to_read:
+                    chunk = os.read(fd, to_read - bytes_read)
+                    if not chunk:
+                        reached_eof = True
+                        break
+                    chunks.append(chunk)
+                    bytes_read += len(chunk)
+                raw_bytes = b"".join(chunks)
+
+                if bytes_read < to_read:
+                    reached_eof = True
+                else:
+                    reached_eof = False
+            except OSError:
+                continue
+            finally:
+                for fd_val in reversed(fds_to_close):
+                    try:
+                        os.close(fd_val)
+                    except OSError:
+                        pass
+
+            total_bytes_scanned += bytes_read
+            total_python_files_processed += 1
+
+            if not reached_eof or len(raw_bytes) > MAX_SOURCE_FILE_BYTES:
+                if total_bytes_scanned >= MAX_TOTAL_SCAN_BYTES:
+                    break
+                continue
+
+            try:
+                source_text = raw_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                try:
+                    source_text = raw_bytes.decode("latin-1")
+                except Exception:
+                    continue
+
+            try:
+                tree = ast.parse(source_text)
+            except (SyntaxError, RecursionError, MemoryError, ValueError, OSError):
+                continue
+
+            _extract_candidates_from_tree(tree, rel_path, candidates)
+    finally:
+        for r_fd in root_fds.values():
+            try:
+                os.close(r_fd)
+            except OSError:
+                pass
+
+    for cat in ("entrypoints", "models", "handlers"):
+        candidates[cat] = _dedupe_candidates(candidates[cat])
+
+    if stats is not None:
+        stats["scanned_entries"] = scanned_entries
+        stats["files_parsed"] = total_python_files_processed
+        stats["files_processed"] = total_python_files_processed
+        stats["bytes_scanned"] = total_bytes_scanned
+
+    return candidates
+
+
+def _format_source_hints(
+    candidates_by_category: Dict[str, List[_SourceCandidate]],
+    base_message: str,
+) -> str:
+    all_candidates: List[_SourceCandidate] = []
+    for cat in ("entrypoints", "models", "handlers"):
+        all_candidates.extend(candidates_by_category.get(cat, []))
+
+    if not all_candidates:
+        return ""
+
+    base_len = len(base_message.encode("utf-8"))
+    available_bytes = MAX_CONTEXT_BYTES - base_len - 1
+    if available_bytes < 100:
+        return ""
+
+    def _render(included: List[_SourceCandidate], omitted: int) -> str:
+        cat_map: Dict[str, List[_SourceCandidate]] = {
+            "entrypoints": [],
+            "models": [],
+            "handlers": [],
+        }
+        for c in included:
+            cat_map[c.category].append(c)
+        sections = []
+        for cat in ("entrypoints", "models", "handlers"):
+            items = cat_map[cat]
+            if items:
+                rendered = ", ".join(c.format_item() for c in items)
+                sections.append("%s: [%s]" % (cat, rendered))
+        if not sections:
+            return ""
+        if omitted > 0:
+            return "Candidate source hints: %s ... [partial: %d omitted]." % (
+                "; ".join(sections),
+                omitted,
+            )
+        return "Candidate source hints: %s." % "; ".join(sections)
+
+    total = len(all_candidates)
+    if total <= 50:
+        full_str = _render(all_candidates, 0)
+        if (
+            full_str
+            and len(("%s %s" % (base_message, full_str)).encode("utf-8"))
+            <= MAX_CONTEXT_BYTES
+        ):
+            return full_str
+        search_limit = total - 1
+    else:
+        search_limit = 50
+
+    low = 1
+    high = search_limit
+    best_str = ""
+
+    while low <= high:
+        mid = (low + high) // 2
+        omitted = total - mid
+        candidate_str = _render(all_candidates[:mid], omitted)
+        if (
+            candidate_str
+            and len(("%s %s" % (base_message, candidate_str)).encode("utf-8"))
+            <= MAX_CONTEXT_BYTES
+        ):
+            best_str = candidate_str
+            low = mid + 1
+        else:
+            high = mid - 1
+
+    return best_str
+
+
 def _context(payload: Dict[str, Any]) -> Dict[str, Any]:
     invocation = payload.get("invocationNum")
     if not isinstance(invocation, int) or isinstance(invocation, bool) or invocation != 0:
@@ -971,7 +1606,11 @@ def _context(payload: Dict[str, Any]) -> Dict[str, Any]:
     runtime_specs = list(dict((label, command) for label, command in runtime_specs).items())
     topology = list(dict.fromkeys(topology))
     checks = list(dict.fromkeys(checks))
-    if not stacks and not runtime_specs and not topology and not checks:
+
+    source_candidates = _collect_source_candidates(roots[:4])
+    has_source_hints = any(source_candidates.values())
+
+    if not stacks and not runtime_specs and not topology and not checks and not has_source_hints:
         return {}
 
     runtime_values = []
@@ -980,7 +1619,7 @@ def _context(payload: Dict[str, Any]) -> Dict[str, Any]:
         version = _runtime_version(label, command, forbidden_executable_roots)
         if version:
             runtime_values.append("%s: %s" % (label, version))
-    if not stacks and not runtime_values and not topology and not checks:
+    if not stacks and not runtime_values and not topology and not checks and not has_source_hints:
         return {}
     parts = ["Detected project context (advisory; static manifests and local runtime versions)."]
     if stacks:
@@ -994,6 +1633,15 @@ def _context(payload: Dict[str, Any]) -> Dict[str, Any]:
             "Candidate checks (inspect project config before running): %s."
             % "; ".join("`%s`" % command for command in checks[:10])
         )
+
+    base_message = " ".join(parts)
+    source_hints_str = _format_source_hints(source_candidates, base_message)
+    if source_hints_str:
+        parts.append(source_hints_str)
+
+    if len(parts) == 1:
+        return {}
+
     message = " ".join(parts)
     encoded = message.encode("utf-8")
     if len(encoded) > MAX_CONTEXT_BYTES:

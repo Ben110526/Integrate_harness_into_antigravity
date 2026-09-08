@@ -744,6 +744,370 @@ class LifecycleGuardTests(unittest.TestCase):
         with mock.patch.object(MODULE, "_runtime_version", return_value=None):
             self.assertEqual(MODULE._context(payload), {})
 
+    @unittest.skipUnless(MODULE._is_safe_dir_fd_supported(), "dir_fd not supported on platform")
+    def test_context_source_hints_extracts_entrypoints_models_handlers(self) -> None:
+        (self.workspace / "main.py").write_text(
+            "def helper():\n    pass\n\nif __name__ == '__main__':\n    helper()\n",
+            encoding="utf-8",
+        )
+        (self.workspace / "models.py").write_text(
+            "class User:\n    pass\n\nclass Order:\n    pass\n",
+            encoding="utf-8",
+        )
+        api_dir = self.workspace / "api"
+        api_dir.mkdir()
+        (api_dir / "auth.py").write_text(
+            "def login_endpoint():\n    pass\n",
+            encoding="utf-8",
+        )
+        result = self.call("context", {"invocationNum": 0})
+        message = result["injectSteps"][0]["ephemeralMessage"]
+        self.assertIn("Candidate source hints:", message)
+        self.assertIn("entrypoints: [main.py:4]", message)
+        self.assertIn("models: [User:models.py:1, Order:models.py:4]", message)
+        self.assertIn("handlers: [login_endpoint:api/auth.py:1]", message)
+        self.assertLessEqual(len(message.encode("utf-8")), 1024)
+
+    @unittest.skipUnless(MODULE._is_safe_dir_fd_supported(), "dir_fd not supported on platform")
+    def test_context_zero_manifest_python_bypasses_both_early_returns(self) -> None:
+        (self.workspace / "main.py").write_text(
+            "def main():\n    print('zero-manifest')\n",
+            encoding="utf-8",
+        )
+        result = self.call("context", {"invocationNum": 0})
+        self.assertIn("injectSteps", result)
+        message = result["injectSteps"][0]["ephemeralMessage"]
+        self.assertIn("Candidate source hints:", message)
+        self.assertIn("entrypoints: [main:main.py:1]", message)
+
+        payload = {**self.common, "invocationNum": 0}
+        ctx_result = MODULE._context(payload)
+        self.assertIn("injectSteps", ctx_result)
+        self.assertIn("Candidate source hints:", ctx_result["injectSteps"][0]["ephemeralMessage"])
+
+        with mock.patch.object(MODULE, "_collect_source_candidates", return_value={"entrypoints": [], "models": [], "handlers": []}):
+            self.assertEqual(MODULE._context(payload), {})
+
+    @unittest.skipUnless(MODULE._is_safe_dir_fd_supported(), "dir_fd not supported on platform")
+    @unittest.skipIf(os.name == "nt", "symlink tests require POSIX platform")
+    def test_context_symlink_and_parent_dir_ignored(self) -> None:
+        outside = self.base / "external"
+        outside.mkdir()
+        (outside / "secret_models.py").write_text("class SecretModel:\n    pass\n", encoding="utf-8")
+
+        file_link = self.workspace / "linked_model.py"
+        file_link.symlink_to(outside / "secret_models.py")
+
+        dir_link = self.workspace / "linked_dir"
+        dir_link.symlink_to(outside, target_is_directory=True)
+
+        (self.workspace / "main.py").write_text("if __name__ == '__main__':\n    pass\n", encoding="utf-8")
+
+        result = self.call("context", {"invocationNum": 0})
+        message = result["injectSteps"][0]["ephemeralMessage"]
+        self.assertIn("main.py", message)
+        self.assertNotIn("SecretModel", message)
+        self.assertNotIn("linked_model.py", message)
+        self.assertNotIn("linked_dir", message)
+
+    @unittest.skipUnless(MODULE._is_safe_dir_fd_supported(), "dir_fd not supported on platform")
+    @unittest.skipIf(os.name == "nt", "symlink tests require POSIX platform")
+    def test_context_ancestor_symlink_race_prevented(self) -> None:
+        ancestor = self.workspace / "sub"
+        child = ancestor / "nested"
+        child.mkdir(parents=True)
+        (child / "models.py").write_text("class LegitimateModel:\n    pass\n", encoding="utf-8")
+
+        outside = self.base / "external"
+        outside_nested = outside / "nested"
+        outside_nested.mkdir(parents=True)
+        (outside_nested / "models.py").write_text("class MaliciousModel:\n    pass\n", encoding="utf-8")
+
+        orig_scandir = os.scandir
+        triggered = [False]
+        child_stat = child.stat()
+
+        class ScandirContext:
+            def __init__(self, target: Any) -> None:
+                self.target = target
+                self.it = orig_scandir(target)
+                self.is_child = False
+                if not triggered[0]:
+                    try:
+                        if isinstance(target, int):
+                            self.is_child = os.path.samestat(os.fstat(target), child_stat)
+                        else:
+                            self.is_child = str(target) == str(child)
+                    except OSError:
+                        pass
+
+            def __enter__(self) -> Any:
+                return iter(self.it)
+
+            def __exit__(self, *args: Any) -> None:
+                self.it.close()
+                if self.is_child and not triggered[0]:
+                    triggered[0] = True
+                    shutil.rmtree(ancestor)
+                    ancestor.symlink_to(outside, target_is_directory=True)
+
+        with mock.patch("os.scandir", side_effect=ScandirContext):
+            candidates = MODULE._collect_source_candidates([self.workspace])
+
+        model_names = [c.symbol for c in candidates["models"]]
+        self.assertNotIn("MaliciousModel", model_names)
+        self.assertEqual(candidates["models"], [])
+
+    @unittest.skipUnless(MODULE._is_safe_dir_fd_supported(), "dir_fd not supported on platform")
+    @unittest.skipIf(os.name == "nt", "symlink tests require POSIX platform")
+    def test_context_root_symlink_race_prevented(self) -> None:
+        parent = self.base / "real_parent"
+        parent.mkdir()
+        root = parent / "workspace"
+        root.mkdir()
+        (root / "models.py").write_text("class InsideModel:\n    pass\n", encoding="utf-8")
+
+        outside = self.base / "outside"
+        (outside / "workspace").mkdir(parents=True)
+        (outside / "workspace" / "models.py").write_text(
+            "class OutsideMarkerModel:\n    pass\n", encoding="utf-8"
+        )
+
+        parent_orig = self.base / "real_parent_orig"
+        orig_scandir = os.scandir
+
+        class ScandirContext:
+            def __init__(self, target: Any) -> None:
+                self.target = target
+                self.it = orig_scandir(target)
+
+            def __enter__(self) -> Any:
+                return iter(self.it)
+
+            def __exit__(self, *args: Any) -> None:
+                self.it.close()
+                if not parent_orig.exists():
+                    parent.rename(parent_orig)
+                    parent.symlink_to(outside, target_is_directory=True)
+
+        with mock.patch("os.scandir", side_effect=ScandirContext):
+            candidates = MODULE._collect_source_candidates([root])
+
+        model_names = [c.symbol for c in candidates["models"]]
+        self.assertNotIn("OutsideMarkerModel", model_names)
+        self.assertIn("InsideModel", model_names)
+
+    @unittest.skipUnless(MODULE._is_safe_dir_fd_supported(), "dir_fd not supported on platform")
+    @unittest.skipIf(os.name == "nt", "symlink tests require POSIX platform")
+    def test_context_discovery_subdir_symlink_race_prevented(self) -> None:
+        sub = self.workspace / "sub"
+        sub.mkdir()
+        (sub / "legit.py").write_text("class LegitSubModel:\n    pass\n", encoding="utf-8")
+
+        outside = self.base / "external_discovery"
+        outside.mkdir()
+        (outside / "leaked.py").write_text("class LeakedDiscoveryModel:\n    pass\n", encoding="utf-8")
+
+        orig_scandir = os.scandir
+        ws_stat = self.workspace.stat()
+        disc_triggered = [False]
+
+        class DiscoveryScandirContext:
+            def __init__(self, target: Any) -> None:
+                self.target = target
+                self.it = orig_scandir(target)
+                self.is_root = False
+                if not disc_triggered[0]:
+                    try:
+                        if isinstance(target, int):
+                            self.is_root = os.path.samestat(os.fstat(target), ws_stat)
+                        else:
+                            self.is_root = str(target) == str(self.workspace)
+                    except OSError:
+                        pass
+
+            def __enter__(self) -> Any:
+                return iter(self.it)
+
+            def __exit__(self, *args: Any) -> None:
+                self.it.close()
+                if self.is_root and not disc_triggered[0]:
+                    disc_triggered[0] = True
+                    shutil.rmtree(sub)
+                    sub.symlink_to(outside, target_is_directory=True)
+
+        with mock.patch("os.scandir", side_effect=DiscoveryScandirContext):
+            candidates = MODULE._collect_source_candidates([self.workspace])
+
+        all_models = [c.symbol for c in candidates["models"]]
+        self.assertNotIn("LeakedDiscoveryModel", all_models)
+        self.assertEqual(candidates["models"], [])
+
+    @unittest.skipUnless(MODULE._is_safe_dir_fd_supported(), "dir_fd not supported on platform")
+    def test_context_multi_root_shares_global_budget(self) -> None:
+        root1 = self.base / "root1"
+        root2 = self.base / "root2"
+        root1.mkdir()
+        root2.mkdir()
+
+        for i in range(100):
+            (root1 / ("file_%03d.py" % i)).write_text("class M%d:\n    pass\n" % i, encoding="utf-8")
+            (root2 / ("file_%03d.py" % i)).write_text("class N%d:\n    pass\n" % i, encoding="utf-8")
+
+        stats: Dict[str, int] = {}
+        MODULE._collect_source_candidates([root1, root2], stats=stats)
+
+        self.assertLessEqual(stats["scanned_entries"], MODULE.MAX_SCANNED_ENTRIES)
+        self.assertEqual(stats["scanned_entries"], 150)
+        self.assertLessEqual(stats["files_parsed"], MODULE.MAX_PYTHON_FILES)
+        self.assertLessEqual(stats["bytes_scanned"], MODULE.MAX_TOTAL_SCAN_BYTES)
+
+    def test_context_safe_fallback_when_dir_fd_unsupported(self) -> None:
+        (self.workspace / "main.py").write_text("if __name__ == '__main__':\n    pass\n", encoding="utf-8")
+        payload = {**self.common, "invocationNum": 0}
+
+        with mock.patch.object(MODULE, "_is_safe_dir_fd_supported", return_value=False):
+            self.assertEqual(MODULE._context(payload), {})
+
+            (self.workspace / "package.json").write_text(
+                json.dumps({"dependencies": {"next": "1"}}), encoding="utf-8"
+            )
+            result = MODULE._context(payload)
+            self.assertIn("injectSteps", result)
+            message = result["injectSteps"][0]["ephemeralMessage"]
+            self.assertIn("Next.js", message)
+            self.assertNotIn("Candidate source hints", message)
+
+    @unittest.skipUnless(MODULE._is_safe_dir_fd_supported(), "dir_fd not supported on platform")
+    def test_context_atomic_truncation_and_omitted_label(self) -> None:
+        models_code = "\n".join(
+            "class LongModelNameNumber%03d:\n    pass\n" % i for i in range(50)
+        )
+        (self.workspace / "models.py").write_text(models_code, encoding="utf-8")
+
+        result = self.call("context", {"invocationNum": 0})
+        message = result["injectSteps"][0]["ephemeralMessage"]
+        self.assertIn("Candidate source hints:", message)
+        self.assertIn("... [partial:", message)
+        self.assertIn("omitted].", message)
+        self.assertLessEqual(len(message.encode("utf-8")), 1024)
+
+        import re
+        match = re.search(r"models: \[([^\]]+)\] \.\.\. \[partial: (\d+) omitted\]\.", message)
+        self.assertIsNotNone(match)
+        assert match is not None
+        self.assertTrue(int(match.group(2)) > 0)
+        items = match.group(1).split(", ")
+        for item in items:
+            self.assertRegex(item, r"^LongModelNameNumber\d{3}:models\.py:\d+$")
+
+        base_long = "X" * 950
+        fake_candidates = {
+            "entrypoints": [MODULE._SourceCandidate("entrypoints", "", "main.py", 1)],
+            "models": [],
+            "handlers": [],
+        }
+        self.assertEqual(MODULE._format_source_hints(fake_candidates, base_long), "")
+
+    def test_format_source_hints_9000_candidates_fast(self) -> None:
+        fake_candidates = {
+            "entrypoints": [],
+            "models": [
+                MODULE._SourceCandidate("models", "Model%d" % i, "models/m%d.py" % i, i)
+                for i in range(9000)
+            ],
+            "handlers": [],
+        }
+        base_message = "Detected project context."
+        import time
+        start = time.time()
+        result = MODULE._format_source_hints(fake_candidates, base_message)
+        elapsed = time.time() - start
+        self.assertLess(elapsed, 0.05)
+        self.assertIn("Candidate source hints:", result)
+        self.assertIn("omitted", result)
+        combined = "%s %s" % (base_message, result)
+        self.assertLessEqual(len(combined.encode("utf-8")), MODULE.MAX_CONTEXT_BYTES)
+
+    @unittest.skipUnless(MODULE._is_safe_dir_fd_supported(), "dir_fd not supported on platform")
+    def test_context_byte_accounting_includes_probes_and_discarded_files(self) -> None:
+        large_file = self.workspace / "large.py"
+        large_file.write_text("#" + "a" * (35 * 1024), encoding="utf-8")
+
+        normal_file = self.workspace / "models.py"
+        normal_file.write_text("class ValidModel:\n    pass\n", encoding="utf-8")
+
+        stats: Dict[str, int] = {}
+        candidates = MODULE._collect_source_candidates([self.workspace], stats=stats)
+
+        model_names = [c.symbol for c in candidates["models"]]
+        self.assertIn("ValidModel", model_names)
+        self.assertGreaterEqual(stats["bytes_scanned"], MODULE.MAX_SOURCE_FILE_BYTES + 1)
+        self.assertEqual(stats["files_parsed"], 2)
+
+    @unittest.skipUnless(MODULE._is_safe_dir_fd_supported(), "dir_fd not supported on platform")
+    def test_context_truncated_file_near_budget_discarded_without_parsing(self) -> None:
+        file_content = "class OversizedModel:\n    pass\n" + "#" * (40 * 1024)
+        (self.workspace / "models.py").write_text(file_content, encoding="utf-8")
+        (self.workspace / "package.json").write_text(
+            json.dumps({"dependencies": {"next": "1"}}), encoding="utf-8"
+        )
+
+        stats: Dict[str, int] = {}
+        with mock.patch.object(MODULE, "MAX_TOTAL_SCAN_BYTES", 10 * 1024):
+            candidates = MODULE._collect_source_candidates([self.workspace], stats=stats)
+            hints = MODULE._format_source_hints(candidates, "base")
+            result = MODULE._context({**self.common, "invocationNum": 0})
+
+        model_names = [c.symbol for c in candidates["models"]]
+        self.assertNotIn("OversizedModel", model_names)
+        self.assertEqual(candidates["models"], [])
+        self.assertNotIn("OversizedModel", hints)
+        self.assertEqual(hints, "")
+        self.assertEqual(stats["files_parsed"], 1)
+        self.assertLessEqual(stats["bytes_scanned"], 10 * 1024)
+        self.assertEqual(stats["bytes_scanned"], 10 * 1024)
+
+        self.assertIn("injectSteps", result)
+        message = result["injectSteps"][0]["ephemeralMessage"]
+        self.assertIn("Next.js", message)
+        self.assertNotIn("OversizedModel", message)
+        self.assertNotIn("Candidate source hints", message)
+
+    @unittest.skipUnless(MODULE._is_safe_dir_fd_supported(), "dir_fd not supported on platform")
+    def test_context_resource_limits_counts_syntax_errors_and_oversized(self) -> None:
+        for i in range(25):
+            (self.workspace / ("bad_%02d.py" % i)).write_text("def syntax_error(\n", encoding="utf-8")
+        stats: Dict[str, int] = {}
+        MODULE._collect_source_candidates([self.workspace], stats=stats)
+        self.assertEqual(stats["files_parsed"], MODULE.MAX_PYTHON_FILES)
+        self.assertEqual(stats["files_processed"], MODULE.MAX_PYTHON_FILES)
+
+    @unittest.skipUnless(MODULE._is_safe_dir_fd_supported(), "dir_fd not supported on platform")
+    def test_context_total_bytes_scanned_never_exceeds_max_total_scan_bytes(self) -> None:
+        # Create 12 files of 30KB each = 360KB > MAX_TOTAL_SCAN_BYTES (262,144 bytes)
+        for i in range(12):
+            (self.workspace / ("mod_%02d.py" % i)).write_text(
+                "class M%02d:\n    pass\n" % i + "#" * (30 * 1024), encoding="utf-8"
+            )
+        stats: Dict[str, int] = {}
+        MODULE._collect_source_candidates([self.workspace], stats=stats)
+        self.assertLessEqual(stats["bytes_scanned"], MODULE.MAX_TOTAL_SCAN_BYTES)
+        self.assertEqual(stats["bytes_scanned"], MODULE.MAX_TOTAL_SCAN_BYTES)
+        self.assertEqual(MODULE.MAX_TOTAL_SCAN_BYTES, 262144)
+
+    @unittest.skipUnless(MODULE._is_safe_dir_fd_supported(), "dir_fd not supported on platform")
+    def test_context_no_fallback_entrypoint_without_ast_evidence(self) -> None:
+        (self.workspace / "main.py").write_text("x = 1\n", encoding="utf-8")
+        (self.workspace / "app.py").write_text("y = 2\n", encoding="utf-8")
+        candidates = MODULE._collect_source_candidates([self.workspace])
+        self.assertEqual(candidates["entrypoints"], [])
+
+        (self.workspace / "server.py").write_text("from fastapi import FastAPI\napp = FastAPI()\n", encoding="utf-8")
+        candidates2 = MODULE._collect_source_candidates([self.workspace])
+        entry_symbols = [c.symbol for c in candidates2["entrypoints"]]
+        self.assertIn("app", entry_symbols)
+
     def _fake_prettier(self) -> Path:
         binary_dir = self.workspace / "node_modules" / ".bin"
         binary_dir.mkdir(parents=True)
