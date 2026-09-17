@@ -6,6 +6,9 @@
   "additionalProperties": false,
   "required": ["version", "mcp"],
   "properties": {
+    "$schema": {
+      "type": "string"
+    },
     "version": {
       "const": 1
     },
@@ -37,9 +40,35 @@
           }
         }
       }
+    },
+    "agents": {
+      "$ref": "#/$defs/agentsConfig"
     }
   },
   "$defs": {
+    "agentsConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "defaultModel": {
+          "type": "string",
+          "minLength": 1
+        },
+        "models": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "harness-researcher": { "type": "string", "minLength": 1 },
+            "harness-implementer": { "type": "string", "minLength": 1 },
+            "harness-reviewer": { "type": "string", "minLength": 1 },
+            "harness-verifier": { "type": "string", "minLength": 1 },
+            "harness-documenter": { "type": "string", "minLength": 1 },
+            "harness-security-auditor": { "type": "string", "minLength": 1 },
+            "harness-db-architect": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
     "toggle": {
       "type": "object",
       "additionalProperties": false,

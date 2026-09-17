@@ -18,6 +18,7 @@ $manifestPath = Join-Path $pluginDir "plugin.json"
 $policySource = Join-Path $packageRoot "global/GEMINI.md"
 $canonicalMcpConfig = Join-Path $pluginDir "mcp_config.json"
 $mcpRenderer = Join-Path $packageRoot "scripts/render-mcp-config.js"
+$agentRenderer = Join-Path $packageRoot "scripts/render-agent-config.js"
 $githubMcpVersion = "1.10.1"
 $githubMcpStatus = "skipped"
 $mcpEnabled = $false
@@ -64,6 +65,9 @@ if (-not (Test-Path $canonicalMcpConfig -PathType Leaf)) {
 }
 if (-not (Test-Path $mcpRenderer -PathType Leaf)) {
     throw "MCP configuration renderer not found at $mcpRenderer"
+}
+if (-not (Test-Path $agentRenderer -PathType Leaf)) {
+    throw "Agent configuration renderer not found at $agentRenderer"
 }
 
 function Test-HarnessTrustedPythonRuntime([string] $Path) {
@@ -258,6 +262,32 @@ function Resolve-HarnessPluginInstallSource {
     New-Item -ItemType Directory -Path $script:pluginTemporaryDirectory | Out-Null
     Copy-Item (Join-Path $script:pluginDir "*") $script:pluginTemporaryDirectory -Recurse -Force
     $script:pluginInstallSource = $script:pluginTemporaryDirectory
+
+    $agentsDir = Join-Path $script:pluginInstallSource "agents"
+    $nodeCommand = Get-Command node -ErrorAction SilentlyContinue
+    if ($nodeCommand) {
+        $agentRenderArgs = @($script:agentRenderer, "--agents-dir", $agentsDir)
+        if ($ConfigPath) {
+            $agentRenderArgs += @("--config", $ConfigPath)
+        }
+        $priorErrorActionPreference = $ErrorActionPreference
+        try {
+            # Windows PowerShell 5.1 promotes native stderr to NativeCommandError.
+            # Capture renderer diagnostics and use its exit code as the contract.
+            $ErrorActionPreference = "Continue"
+            $rendererOutput = (& $nodeCommand.Source @agentRenderArgs 2>&1 | Out-String)
+            $rendererStatus = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $priorErrorActionPreference
+        }
+        if ($rendererStatus -ne 0) {
+            throw "Failed to render agent model configurations: $rendererOutput"
+        }
+    }
+    elseif ($ConfigPath) {
+        throw "Error: Node.js 20.18.1+ is required to render custom subagent models: $ConfigPath"
+    }
 
     $runtimeMarker = Join-Path $script:pluginInstallSource "scripts/.python-runtime"
     if ($script:pythonRuntime) {

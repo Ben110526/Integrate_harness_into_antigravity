@@ -68,6 +68,7 @@ eval_root="$(mktemp -d "${repo_root}/.harness-eval.XXXXXX")"
 empty_hooks="${eval_root}/empty-hooks"
 mkdir -p -- "${empty_hooks}"
 cleanup() {
+  chmod -R u+w "${eval_root}" 2>/dev/null || true
   rm -rf -- "${eval_root}"
 }
 trap cleanup EXIT

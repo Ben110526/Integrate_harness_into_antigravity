@@ -105,7 +105,15 @@ function defaultUserConfig() {
 }
 
 function validateUserConfig(config) {
-  assertExactKeys(config, ["version", "mcp"], ["version", "mcp"], "configuration");
+  assertExactKeys(config, ["$schema", "version", "mcp", "agents"], ["version", "mcp"], "configuration");
+  if (Object.prototype.hasOwnProperty.call(config, "$schema")) {
+    if (typeof config.$schema !== "string" || config.$schema.trim() === "") {
+      fail("configuration.$schema must be a non-empty string");
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(config, "agents")) {
+    assertRecord(config.agents, "configuration.agents");
+  }
   if (config.version !== 1) {
     fail("configuration.version must be exactly 1");
   }

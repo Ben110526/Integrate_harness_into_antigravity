@@ -1,10 +1,10 @@
 # One goal, multiple milestones
 
-The harness now supplies an instruction-level workflow for authorized tasks that
+The harness supplies an instruction-level workflow for authorized tasks that
 span several independently verifiable outcomes. `harness-run` adds a brief,
-task-scoped source context, milestone dispatch, and a native-first handoff/resume
-contract. It does not add a daemon, model gateway, custom task-state engine, or
-unconditional continuation hook.
+task-scoped source context, milestone dispatch, and an atomic, schema-validated
+task-state persistence and resumption engine (`scripts/task_state.py`). It does
+not add a background daemon, external model gateway, or unconditional continuation hook.
 
 ## Use it
 
@@ -70,11 +70,48 @@ messaging is a conditional optimization: verify the main's message tool and the
 worker's live ID/ability to receive work, otherwise create a fresh worker from its
 self-contained assignment.
 
-Do not create `.harness/tasks/**` or pretend ordinary workspace files are native
-artifacts to avoid the hook. A future custom checkpoint implementation must first
-prove that metadata does not clear source debt or reset continuation limits,
-while source/config edits still create debt. No blanket `.harness/**` or JSON
-exemption is introduced.
+## Task state persistence & resumption engine (M3)
+
+The task state engine (`scripts/task_state.py`) implements durable checkpointing
+and resumption while preserving strict verification invariants:
+
+- **Storage Location:** Checkpoints are stored strictly under
+  `.harness/tasks/<task-id>/state.json`. Task IDs must match `^[a-zA-Z0-9_-]{1,64}$`,
+  rejecting path traversal (`..`), directory separators, and symlink escapes.
+- **Strict Schema Enforcement:** Validated against `schemas/task-state.schema.json`
+  (schema version 1, max size 512 KiB). Extra unexpected keys are rejected.
+- **Atomic Writes & Concurrency Safety:** Employs cross-process file locking
+  (`state.json.lock` with a 3-second timeout) and writes to a temporary file before
+  atomically replacing via `os.replace`, preventing corrupted checkpoints from concurrent runs.
+- **Verification Gate Integration:** The verification gate explicitly classifies
+  `.harness/tasks/<task-id>/state.json` as managed task metadata. Saving progress
+  checkpoints neither creates unverified code debt nor clears existing behavioral
+  test evidence. Meanwhile, arbitrary files under `.harness/**` or source/test edits
+  continue to strictly require verification evidence.
+- **Deterministic Source Fingerprinting & Drift Detection:** Computes SHA-256 digests
+  across workspace source files (excluding `.git`, `node_modules`, `.venv`, `.harness`,
+  and build artifacts). Upon task resumption (`assess_task_resumption`), any changed
+  or deleted source files or modified brief revisions automatically mark affected
+  acceptance criteria evidence as stale, requiring re-verification.
+- **Turn-0 Context Hint:** `PreInvocation` in `lifecycle_guard.py` checks for active
+  tasks on invocation 0 and injects a compact, advisory hint summarizing active
+  milestones, verified AC count, and source drift status.
+
+### Task state CLI commands
+
+```bash
+# Initialize a new task checkpoint
+python3 scripts/task_state.py init --task-id task-123 --milestones M1,M2 --acs AC-1,AC-2
+
+# List all active tasks ordered by update time
+python3 scripts/task_state.py list
+
+# Assess resumption state and check for source drift
+python3 scripts/task_state.py resume task-123
+
+# Validate a state.json file against the schema
+python3 scripts/task_state.py validate .harness/tasks/task-123/state.json
+```
 
 ## Native capabilities and verification status
 

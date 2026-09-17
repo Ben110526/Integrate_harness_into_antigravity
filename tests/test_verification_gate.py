@@ -522,7 +522,7 @@ class VerificationGateTests(unittest.TestCase):
         self.assertEqual(self.stop()["decision"], "allow")
 
     def test_workspace_metadata_and_artifact_flag_are_not_blanket_exemptions(self) -> None:
-        for target in (".harness/tasks/demo/state.json", ".harness/config.json", ".harness/test_task.py"):
+        for target in (".harness/tasks/demo/brief.md", ".harness/config.json", ".harness/test_task.py"):
             with self.subTest(target=target):
                 (self.artifacts / GATE_MODULE.STATE_FILE).unlink(missing_ok=True)
                 self.write()
@@ -1431,6 +1431,39 @@ class VerificationGateTests(unittest.TestCase):
         self.assertEqual(self.call("post", {"stepIdx": 1, "error": ""}), {})
         self.assertEqual(self.stop(), {"decision": "allow"})
 
+    def test_m1_behavioral_debt_message_lists_zero_test_and_cwd_requirements(self) -> None:
+        """M1: Stop hint for behavioral debt must mention zero-test and Cwd requirements."""
+        self.write()
+        # python -m unittest with zero tests exits 0 — gate must warn about this
+        self.command(2, "python -m unittest -q")
+        result = self.stop()
+        self.assertEqual(result["decision"], "continue")
+        reason = result.get("reason", "")
+        self.assertIn(
+            "zero tests",
+            reason.lower(),
+            "Stop hint must mention zero-tests issue so model selects an in-scope target",
+        )
+        self.assertIn(
+            "Cwd",
+            reason,
+            "Stop hint must require workspace Cwd so model avoids out-of-workspace runs",
+        )
+
+    def test_m1_post_write_stale_evidence_message_mentions_zero_test_risk(self) -> None:
+        """M1: After a re-write the updated-debt message must also mention zero-test risk."""
+        self.write(step=1)
+        self.command(2, "pytest -q")   # counts as behavioral evidence (step 2)
+        self.write(step=3)             # new write after evidence → re-opens debt
+        result = self.stop()
+        self.assertEqual(result["decision"], "continue")
+        reason = result.get("reason", "")
+        self.assertIn(
+            "zero tests",
+            reason.lower(),
+            "Post-write stale-evidence hint must mention zero-test risk",
+        )
+
     def test_hook_does_not_register_permission_bypassing_pretooluse(self) -> None:
         hooks = json.loads(HOOKS.read_text(encoding="utf-8"))
         verification_gate = hooks["verification-gate"]
@@ -1515,6 +1548,129 @@ class VerificationGateTests(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout), {"decision": "allow"})
         self.assertEqual(result.stderr, "")
         self.assertFalse(poison_record.exists())
+
+    def test_chained_cd_and_python_options_preserve_runner_enforced_status(self) -> None:
+        runner = GATE.with_name("verify_tests.py")
+        tests_dir = self.workspace / "tests"
+        tests_dir.mkdir(exist_ok=True)
+        (tests_dir / "test_ok.py").write_text(
+            "import unittest\nclass T(unittest.TestCase):\n def test_pass(self): pass\n",
+            encoding="utf-8",
+        )
+        self.write()
+        cmd = f"cd tests && python3 -B {_shell_quote(str(runner))} unittest -q"
+        self.command(2, cmd)
+        event = GATE_MODULE._event("run_command", {
+            "CommandLine": cmd,
+            "Cwd": str(self.workspace),
+        }, self.common)
+        self.assertEqual(event.get("behavioral"), True)
+        self.assertEqual(event.get("testCountStatus"), "runner-enforced")
+        self.assertEqual(self.stop()["decision"], "allow")
+        state = json.loads((self.artifacts / GATE_MODULE.STATE_FILE).read_text())
+        self.assertEqual(state.get("testCountStatus"), "runner-enforced")
+
+    def test_python_launcher_and_options_recognized_as_runner_enforced(self) -> None:
+        runner = GATE.with_name("verify_tests.py")
+        (self.workspace / "test_app.py").write_text(
+            "import unittest\nclass T(unittest.TestCase):\n def test_pass(self): pass\n",
+            encoding="utf-8",
+        )
+        for cmd in (
+            f"python3 -u {_shell_quote(str(runner))} unittest -q",
+            f"python3 -s {_shell_quote(str(runner))} unittest -q",
+            f"py -3 {_shell_quote(str(runner))} unittest -q",
+        ):
+            with self.subTest(cmd=cmd):
+                event = GATE_MODULE._event("run_command", {
+                    "CommandLine": cmd,
+                    "Cwd": str(self.workspace),
+                }, self.common)
+                self.assertEqual(event.get("behavioral"), True)
+                self.assertEqual(event.get("testCountStatus"), "runner-enforced")
+
+    def test_non_cd_prior_segment_downgrades_to_unverified(self) -> None:
+        runner = GATE.with_name("verify_tests.py")
+        cmd = f"echo running && python3 {_shell_quote(str(runner))} unittest -q"
+        event = GATE_MODULE._event("run_command", {
+            "CommandLine": cmd,
+            "Cwd": str(self.workspace),
+        }, self.common)
+        self.assertEqual(event.get("behavioral"), True)
+        self.assertEqual(event.get("testCountStatus"), "unverified")
+
+    def test_python_options_strip_in_classify_and_behavioral_evidence(self) -> None:
+        self.assertEqual(
+            GATE_MODULE._classify_simple(["python3", "-B", "-m", "pytest"]),
+            GATE_MODULE.EVIDENCE,
+        )
+        self.assertEqual(
+            GATE_MODULE._classify_simple(["python3", "--verbose", "-m", "pytest"]),
+            GATE_MODULE.EVIDENCE,
+        )
+        self.assertEqual(
+            GATE_MODULE._classify_simple(["python3", "-P", "-m", "pytest"]),
+            GATE_MODULE.EVIDENCE,
+        )
+        self.assertTrue(
+            GATE_MODULE._simple_has_behavioral_evidence(["python3", "-B", "-m", "pytest"])
+        )
+        self.assertTrue(
+            GATE_MODULE._simple_has_behavioral_evidence(["python3", "--verbose", "-m", "pytest"])
+        )
+        self.assertEqual(
+            GATE_MODULE._classify_simple(["python3", "-B", "-m", "unittest"]),
+            GATE_MODULE.EVIDENCE,
+        )
+        self.assertFalse(
+            GATE_MODULE._simple_has_behavioral_evidence(["python3", "-B", "-m", "unittest"])
+        )
+
+    def test_task_metadata_checkpoint_does_not_invalidate_evidence(self) -> None:
+        self.write(step=1)
+        self.command(2, "pytest -q")
+        self.assertEqual(self.stop()["decision"], "allow")
+
+        task_state_path = self.workspace / ".harness" / "tasks" / "task-1" / "state.json"
+        task_state_path.parent.mkdir(parents=True, exist_ok=True)
+        task_state_path.write_text("{}", encoding="utf-8")
+        event = GATE_MODULE._event(
+            "write_to_file",
+            {"TargetFile": str(task_state_path)},
+            self.common,
+        )
+        self.assertEqual(event.get("kind"), GATE_MODULE.TASK_METADATA)
+
+        self.call("post", {
+            **self.common,
+            "stepIdx": 3,
+            "error": "",
+            "toolCall": {
+                "name": "write_to_file",
+                "args": {"TargetFile": str(task_state_path)},
+            },
+        })
+
+        self.assertEqual(self.stop()["decision"], "allow")
+        state = json.loads((self.artifacts / GATE_MODULE.STATE_FILE).read_text())
+        self.assertEqual(state.get("lastTaskMetadataStep"), 3)
+        self.assertEqual(state.get("lastWriteStep"), 1)
+        self.assertEqual(state.get("lastEvidenceStep"), 2)
+
+    def test_non_state_harness_writes_remain_mutations(self) -> None:
+        for non_state in (
+            ".harness/config.json",
+            ".harness/tasks/task-1/script.py",
+            ".harness/tasks/task-1/run.sh",
+            ".harness/other.json",
+        ):
+            with self.subTest(path=non_state):
+                event = GATE_MODULE._event(
+                    "write_to_file",
+                    {"TargetFile": str(self.workspace / non_state)},
+                    self.common,
+                )
+                self.assertEqual(event.get("kind"), GATE_MODULE.MUTATION)
 
 
 if __name__ == "__main__":

@@ -239,6 +239,97 @@ Add the allowlist rules under `permissions.allow`:
 - 🛡️ `harness-security-auditor`: Audits against OWASP vulnerabilities and prevents sensitive data leaks.
 - 🗄️ `harness-db-architect`: Reviews database schemas, indexes, locks, and safe zero-downtime migrations.
 
+### Subagent Model Customization
+
+By default, all subagents inherit the main session's model (`model: inherit`). You can customize the model assigned to each subagent through `harness.config.json` via the `agents` block to optimize quota, latency, and reasoning power.
+
+To query the models available on your Google AI / Antigravity account, run:
+```bash
+agy models
+```
+
+Copy `harness.config.example.json` to `harness.config.json` in your repository root, or supply an explicit profile via `--config <path>` (macOS/Linux) or `-ConfigPath <path>` (Windows).
+
+#### Preset: Cost-Optimized Profile (Recommended for Large Repos)
+Balances cost and speed by using lightweight models for mechanical, bounded tasks (testing, documentation formatting) while reserving high-reasoning models for implementation, review, and security auditing:
+
+```json
+{
+  "$schema": "./schemas/harness.config.schema.json",
+  "version": 1,
+  "mcp": {
+    "servers": {
+      "context7": {
+        "enabled": true
+      },
+      "serena": {
+        "enabled": true
+      },
+      "playwright": {
+        "enabled": true,
+        "mode": "loopback",
+        "allowedOrigins": []
+      },
+      "github": {
+        "enabled": true
+      },
+      "sentry": {
+        "enabled": true
+      }
+    }
+  },
+  "agents": {
+    "defaultModel": "inherit",
+    "models": {
+      "harness-researcher": "gemini-3.7-flash-high",
+      "harness-implementer": "gemini-3.8-flash-high",
+      "harness-reviewer": "gemini-3.8-flash-high",
+      "harness-verifier": "gemini-3.7-flash-high",
+      "harness-documenter": "gemini-3.7-flash-medium",
+      "harness-security-auditor": "gemini-3.8-flash-high",
+      "harness-db-architect": "gemini-3.8-flash-high"
+    }
+  }
+}
+```
+
+#### Preset: Maximum Quality Profile (Default)
+Keeps all subagents on `inherit` (or explicitly pins `gemini-3.8-flash-high`) for maximum reasoning depth across all workflows:
+
+```json
+{
+  "$schema": "./schemas/harness.config.schema.json",
+  "version": 1,
+  "mcp": {
+    "servers": {
+      "context7": {
+        "enabled": true
+      },
+      "serena": {
+        "enabled": true
+      },
+      "playwright": {
+        "enabled": true,
+        "mode": "loopback",
+        "allowedOrigins": []
+      },
+      "github": {
+        "enabled": true
+      },
+      "sentry": {
+        "enabled": true
+      }
+    }
+  },
+  "agents": {
+    "defaultModel": "inherit",
+    "models": {}
+  }
+}
+```
+
+Supported model identifiers include tier aliases (`inherit`, `flash_lite`, `flash`, `pro`) and explicit Antigravity model IDs (e.g. `gemini-3.8-flash-high`, `gemini-3.7-flash-high`, `gemini-3.8-flash-medium`, `gemini-2.5-pro`).
+
 ### 4 Lifecycle Hooks
 - 🔒 **DLP PreToolUse**: Blocks leaks of private keys, tokens, and sensitive `.env` files before tool calls.
 - 🗺️ **Context PreInvocation**: Injects a compact, bounded architectural blueprint on the first turn.
@@ -251,6 +342,14 @@ Add the allowlist rules under `permissions.allow`:
 - 🌐 `harness-playwright`: Automated browser testing and UI exploration (loopback restricted by default).
 - 🐙 `harness-github`: Read-only access to Issues, Pull Requests, CI Actions, and security alerts.
 - 🚨 `harness-sentry`: Real-time production error, issue, and telemetry data inspection.
+
+### 💾 Task State Persistence & Resumption Engine (M3)
+- 📋 **Schema-Validated Checkpoints**: Manages task state under `.harness/tasks/<task-id>/state.json` validated against `schemas/task-state.schema.json`.
+- 🔒 **Atomic Locking & Concurrency Protection**: Cross-process file locking (`state.json.lock`) and atomic replacement prevent checkpoint corruption.
+- 🛡️ **Path Confinement**: Enforces task ID pattern `^[a-zA-Z0-9_-]{1,64}$`, rejecting path traversal and outside-workspace escapes.
+- ⚡ **Verification Gate Exemption for Checkpoints**: Checkpoint saves are recognized as managed task metadata, meaning progress checkpoints do not create unverified code debt or wipe out previous test evidence.
+- 🔍 **Deterministic Source Fingerprint & Drift Invalidation**: Detects workspace changes across turns and automatically flags affected acceptance criteria as stale.
+- 💡 **Turn-0 Context Hint**: Seamlessly injects task resumption status into model context on turn initialization.
 
 ---
 
@@ -275,9 +374,13 @@ Run the automated diagnostic health check to verify your environment (`agy`, Pyt
 
 ## 🧪 Documentation & Testing
 
-Run deterministic repository checks without consuming model quota:
+Run deterministic repository checks and test suites without consuming model quota:
 ```bash
+# Run repository syntax, profile, and policy assertions
 ./tests/test-source.sh
+
+# Run comprehensive test suite across all modules (256 tests)
+python3 -m unittest discover -s tests -p "test_*.py"
 ```
 
 ### Deep-Dive Documentation
@@ -285,4 +388,5 @@ Run deterministic repository checks without consuming model quota:
 - [Detailed Architecture & Security Controls (docs/architecture.md)](docs/architecture.md)
 - [Multi-milestone goals, checkpoints, resume, and native pilot](docs/long-running-workflow.md)
 - [MCP Configuration & Network Permissions (docs/mcp-profiles.md)](docs/mcp-profiles.md)
+- [Verification Evidence & Limitations (docs/verification-evidence.md)](docs/verification-evidence.md)
 - [Eval Harness & Benchmark Methodology (evals/README.md)](evals/README.md)

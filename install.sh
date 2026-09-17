@@ -3,6 +3,7 @@
 set -euo pipefail
 
 package_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+script_dir="${package_root}"
 plugin_dir="${package_root}/plugin/codex-claude-harness"
 policy_source="${package_root}/global/GEMINI.md"
 agy_executable="$(command -v agy || true)"
@@ -363,6 +364,19 @@ prepare_plugin_source() {
   plugin_temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/codex-harness-plugin.XXXXXX")"
   cp -R -- "${plugin_dir}/." "${plugin_temp_dir}/"
   plugin_install_source="${plugin_temp_dir}"
+
+  if command -v node >/dev/null 2>&1; then
+    local agent_render_cmd=(node "${script_dir}/scripts/render-agent-config.js" --agents-dir "${plugin_install_source}/agents")
+    if [[ -n "${harness_config_path}" ]]; then
+      agent_render_cmd+=(--config "${harness_config_path}")
+    fi
+    if ! "${agent_render_cmd[@]}"; then
+      exit 2
+    fi
+  elif [[ -n "${harness_config_path}" ]]; then
+    printf 'Error: Node.js 20.18.1+ is required to render custom subagent models: %s\n' "${harness_config_path}" >&2
+    exit 2
+  fi
 
   if [[ -n "${python_runtime}" ]]; then
     printf '%s\n' "${python_runtime}" > "${plugin_install_source}/scripts/.python-runtime"

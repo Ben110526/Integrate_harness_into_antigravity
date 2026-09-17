@@ -196,6 +196,18 @@ class PolicyTests(unittest.TestCase):
             frontmatter = text.split("---", 2)[1]
             self.assertNotIn("ask_question", frontmatter, path)
             self.assertIn("[UNRESOLVED]", text, path)
+            self.assertIn("model: inherit", frontmatter, path)
+
+    def test_researcher_enforces_behavior_map_contract(self) -> None:
+        researcher = (AGENT_DIRECTORY / "harness-researcher.md").read_text(encoding="utf-8")
+        for term in (
+            "Behavior Map",
+            "entry point → call sites → core behavior → outputs/side effects → tests",
+            "invariants",
+            "competing hypotheses",
+            "cheapest discriminating check",
+        ):
+            self.assertIn(term, researcher)
 
     def test_multimilestone_skill_is_discoverable_without_expanding_global_budget(self) -> None:
         self.assertIn("For authorized multi-milestone work, load `/harness-run`", self.policy)
@@ -230,9 +242,9 @@ class PolicyTests(unittest.TestCase):
             "uncommitted, new, and deleted", "before/after source fingerprint",
             "mark affected evidence stale", "Preserve user changes",
             "corrupt/incomplete", "not an authenticated runner receipt",
-            "Do not create `.harness/tasks/**`", "ordinary workspace write",
-            "`IsArtifact=True`", "durable resume is unverified",
-            "cancellation, and no-progress limits", "version-1 MCP install profile",
+            "scripts/task_state.py", "ordinary workspace write",
+            "`IsArtifact=True`", ".harness/tasks/<task-id>/state.json",
+            "version-1 MCP install profile",
         ):
             self.assertIn(term, run, term)
 

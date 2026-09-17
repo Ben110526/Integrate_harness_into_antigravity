@@ -2,3 +2,5 @@
 .harness-eval.*
 __pycache__/
 docs/local-audit.md
+.serena/
+.claude/

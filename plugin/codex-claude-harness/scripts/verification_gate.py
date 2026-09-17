@@ -50,6 +50,9 @@ EVIDENCE = "evidence"
 MUTATION = "mutation"
 NEUTRAL = "neutral"
 WAIVER = "waiver"
+TASK_METADATA = "task_metadata"
+
+_TASK_STATE_PATH = re.compile(r"^\.harness/tasks/[a-zA-Z0-9_-]{1,64}/state\.json$")
 
 _SCRIPT_EVIDENCE_NAME = re.compile(
     r"(?:^|[-_.])(?:test|tests|check|lint|verify|validate|doctor|build)(?:[-_.]|$)",
@@ -793,6 +796,13 @@ def _requires_behavioral_verification(path: Optional[str]) -> bool:
     return not is_document
 
 
+def _is_task_state_path(path: Optional[str]) -> bool:
+    if not path:
+        return False
+    normalized = path.replace("\\", "/")
+    return bool(_TASK_STATE_PATH.fullmatch(normalized))
+
+
 def _command(args: dict[str, Any]) -> str:
     for key in ("CommandLine", "command", "Command"):
         value = args.get(key)
@@ -1024,6 +1034,47 @@ def _classify_coverage_run(args: list[str], depth: int) -> str:
     return NEUTRAL
 
 
+def _is_python_executable(executable: str) -> bool:
+    return bool(re.fullmatch(r"(?:python\d*(?:\.\d+)?|py)", executable))
+
+
+def _strip_python_options(args: list[str]) -> list[str]:
+    standalone = {
+        "-b", "-bb", "-d", "-e", "-i", "-o", "-oo",
+        "-p", "-q", "-s", "-u", "-v", "--isolated",
+        "--verbose",
+    }
+    values = list(args)
+    while values:
+        val = values[0]
+        lowered = val.casefold()
+        if lowered in standalone:
+            values.pop(0)
+            continue
+        if re.fullmatch(r"-[bdeioqsuv]+", lowered):
+            values.pop(0)
+            continue
+        if re.fullmatch(r"-\d+(?:\.\d+)?(?:-(?:32|64))?", lowered):
+            values.pop(0)
+            continue
+        if lowered in {"-w", "-x"}:
+            values.pop(0)
+            if values:
+                values.pop(0)
+            continue
+        if (
+            (lowered.startswith("-w") or lowered.startswith("-x"))
+            and len(lowered) > 2
+        ):
+            values.pop(0)
+            continue
+        if lowered.startswith("--check-hash-based-pycs="):
+            values.pop(0)
+            continue
+        break
+    return values
+
+
 def _classify_simple(values: list[str], depth: int = 0) -> str:
     """Classify a single command from executable/subcommand structure.
 
@@ -1092,20 +1143,22 @@ def _classify_simple(values: list[str], depth: int = 0) -> str:
             return EVIDENCE if lowered[:1] == ["test"] else NEUTRAL
         return EVIDENCE
 
-    if re.fullmatch(r"python\d*(?:\.\d+)?", executable):
-        if lowered[:1] == ["-m"] and len(lowered) > 1:
-            module = lowered[1]
+    if _is_python_executable(executable):
+        clean_args = _strip_python_options(args)
+        clean_lowered = [value.casefold() for value in clean_args]
+        if clean_lowered[:1] == ["-m"] and len(clean_lowered) > 1:
+            module = clean_lowered[1]
             if module == "coverage":
-                return _classify_simple([module, *args[2:]], depth + 1)
+                return _classify_simple([module, *clean_args[2:]], depth + 1)
             if module in {
                 "pytest", "unittest", "compileall", "py_compile", "doctest",
                 "trial", "twisted.trial", "pytest-bdd", "pytest_bdd", "mypy",
                 "ruff",
             }:
-                return _classify_simple([module, *args[2:]], depth + 1)
-        if args and _script_name_is_evidence(args[0]):
+                return _classify_simple([module, *clean_args[2:]], depth + 1)
+        if clean_args and _script_name_is_evidence(clean_args[0]):
             return EVIDENCE
-        if args and _script_name_is_mutation(args[0]):
+        if clean_args and _script_name_is_mutation(clean_args[0]):
             return MUTATION
         return NEUTRAL
 
@@ -1431,12 +1484,14 @@ def _simple_has_behavioral_evidence(values: list[str], depth: int = 0) -> bool:
         return True
     if executable == "playwright":
         return lowered[:1] == ["test"] and "--list" not in lowered
-    if re.fullmatch(r"python\d*(?:\.\d+)?", executable):
-        if lowered[:1] == ["-m"] and len(args) > 1:
-            return _simple_has_behavioral_evidence([args[1], *args[2:]], depth + 1)
-        if args and Path(args[0]).name == "verify_tests.py":
-            return _is_counted_runner(args[0]) and args[1:2] == ["unittest"]
-        return bool(args and _script_name_is_behavioral(args[0]))
+    if _is_python_executable(executable):
+        clean_args = _strip_python_options(args)
+        clean_lowered = [value.casefold() for value in clean_args]
+        if clean_lowered[:1] == ["-m"] and len(clean_args) > 1:
+            return _simple_has_behavioral_evidence([clean_args[1], *clean_args[2:]], depth + 1)
+        if clean_args and Path(clean_args[0]).name == "verify_tests.py":
+            return _is_counted_runner(clean_args[0]) and clean_args[1:2] == ["unittest"]
+        return bool(clean_args and _script_name_is_behavioral(clean_args[0]))
     if executable == "coverage":
         if lowered[:1] != ["run"]:
             return False
@@ -1700,6 +1755,11 @@ def _evidence_scope_is_known(command: str, args: dict[str, Any], payload: dict[s
 def _event(name: str, args: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
     if name in WRITE_TOOLS and _is_workspace_write(args, payload):
         path = _workspace_relative_target(args, payload)
+        if _is_task_state_path(path):
+            return {
+                "kind": TASK_METADATA,
+                "modifiedPath": path,
+            }
         return {
             "kind": MUTATION,
             "modifiedPath": path,
@@ -1727,16 +1787,30 @@ def _event(name: str, args: dict[str, Any], payload: dict[str, Any]) -> dict[str
             if behavioral:
                 event["behavioral"] = True
                 segments, _ = _tokens(command)
+                # Direct invocation or a safe cd-chain ending in the bundled adapter.
                 # Only a direct, foreground bundled adapter invocation has a
                 # native positive-count contract. Legacy runner recognition is
                 # retained, but its test count must not be reported as verified.
-                values = _strip_prefixes(segments[0]) if len(segments) == 1 else []
-                counted = (
-                    len(values) >= 3
-                    and re.fullmatch(r"python\d*(?:\.\d+)?", _executable(values[0]))
-                    and _is_counted_runner(values[1])
-                    and values[2] == "unittest"
+                target_segment = segments[-1] if segments else []
+                all_prior_are_cd = (
+                    all(
+                        bool(_strip_prefixes(seg))
+                        and _executable(_strip_prefixes(seg)[0]) == "cd"
+                        for seg in segments[:-1]
+                    )
+                    if len(segments) > 1
+                    else True
                 )
+                values = _strip_prefixes(target_segment) if all_prior_are_cd else []
+                if values and _is_python_executable(_executable(values[0])):
+                    clean_adapter_args = _strip_python_options(values[1:])
+                    counted = (
+                        len(clean_adapter_args) >= 2
+                        and _is_counted_runner(clean_adapter_args[0])
+                        and clean_adapter_args[1] == "unittest"
+                    )
+                else:
+                    counted = False
                 event["testCountStatus"] = "runner-enforced" if counted else "unverified"
             if waiver:
                 event["waiverReason"] = waiver
@@ -1746,6 +1820,12 @@ def _event(name: str, args: dict[str, Any], payload: dict[str, Any]) -> dict[str
 
 def _apply_event(state: dict[str, Any], event: dict[str, Any], step: int) -> bool:
     kind = event.get("kind")
+    if kind == TASK_METADATA:
+        previous_metadata = state.get("lastTaskMetadataStep")
+        if not isinstance(previous_metadata, int) or step > previous_metadata:
+            state["lastTaskMetadataStep"] = step
+            return True
+        return False
     if kind == MUTATION:
         previous_write = state.get("lastWriteStep")
         changed = False
@@ -1931,9 +2011,17 @@ def _handle_stop(payload: dict[str, Any]) -> None:
                         "Workspace files changed in logic or unknown scope without later behavioral "
                         "verification. Run the smallest relevant unit, integration, or regression "
                         "test; a format, lint, type-check, or build-only command is not sufficient "
-                        "for this scope. Use an explicit workspace Cwd and in-scope test targets. "
-                        "Plain unittest/doctest can pass with zero tests: use the bundled "
-                        "scripts/verify_tests.py unittest adapter for a positive unittest count. "
+                        "for this scope. Requirements: (1) Use an explicit workspace Cwd — a test "
+                        "run whose Cwd is outside the workspace or contains `cd <outside>` does not "
+                        "verify the changed files. (2) The test target must be in-scope: a command "
+                        "that runs zero tests (e.g. 'Ran 0 tests', 'no tests ran', '0 passed') is "
+                        "not behavioral evidence even when it exits 0 — redirect your test runner "
+                        "to the specific file or directory you changed. (3) Plain unittest/doctest "
+                        "can pass with zero tests: use the bundled "
+                        "scripts/verify_tests.py unittest adapter for a positive count contract. "
+                        "Common runners: for pytest use a path/file argument; for jest/vitest pass "
+                        "--testPathPattern; for go test use ./pkg/... with a test file present; "
+                        "for cargo test pass the module filter. "
                         f"If no behavioral check can run, print `{NO_CHECK_MARKER} "
                         "<specific reason>` and report the limitation in the final response. This "
                         "gate retries once to avoid a loop."
@@ -1942,6 +2030,9 @@ def _handle_stop(payload: dict[str, Any]) -> None:
                     continue_reasons.append(
                         "Workspace files changed after the latest successful verification. Run the "
                         "smallest relevant test, lint, type-check, or build command before finishing. "
+                        "Ensure the test Cwd is inside the workspace and the test target covers the "
+                        "changed files — a run reporting zero tests executed (exit 0 but no tests) "
+                        "does not close this debt. "
                         f"If no runnable check exists, run a command that prints `{NO_CHECK_MARKER} "
                         "<specific reason>` and report that limitation in the final response. This "
                         "gate retries once to avoid a loop."

@@ -120,15 +120,15 @@ and checks when safe, or ask for the missing material decision. Reuse only
 evidence whose scope and fingerprints still match; resume does not justify
 repeating all completed work without examining validity.
 
-Do not create `.harness/tasks/**`, a custom `state.json` engine, or a shared mutable
-blackboard in this implementation. Do not mark an ordinary workspace write
+Task checkpoint persistence is managed strictly through the task state engine
+(`scripts/task_state.py`) under `.harness/tasks/<task-id>/state.json` and validated
+against `schemas/task-state.schema.json`. Arbitrary unmanaged files or shared
+mutable blackboards remain prohibited. Do not mark an ordinary workspace write
 `IsArtifact=True` to evade verification: that flag is only for genuine native
-artifacts under an observed supported contract. If native persistence is missing,
-use a compact conversation handoff and disclose that durable resume is unverified;
-do not silently manufacture a filesystem checkpoint. Files and instructions do
-not supply a scheduler, automatic restart, extra context/quota, or app-closed work.
+artifacts under an observed supported contract. Checkpoint saves are recognized by
+the verification gate as managed task metadata and do not create verification debt,
+while edits to source, test, or config files continue to enforce strict behavioral
+verification. Files and instructions do not supply a scheduler, automatic restart,
+extra context/quota, or app-closed work.
 
-Custom persistence or a bounded continuation guard requires a separate measured
-native pilot, an explicit design decision, and regression tests for metadata versus
-source debt, stale evidence, corruption, cancellation, and no-progress limits.
 Do not add `execution` or `memory` keys to the version-1 MCP install profile.

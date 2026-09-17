@@ -30,6 +30,8 @@ printf '[check] strict MCP profile renderer\n'
 command -v node >/dev/null 2>&1 || fail 'Node.js is required for MCP profile renderer checks'
 node --check scripts/render-mcp-config.js
 node --test tests/test-render-mcp-config.js
+node --check scripts/render-agent-config.js
+node --test tests/test-render-agent-config.js
 
 printf '[check] plugin JSON and frontmatter inventory\n'
 python3 - "${repo_root}" <<'PY'
@@ -199,6 +201,8 @@ if "HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS" not in install_sh or "HARNESS_PLAYWRIGHT
     raise SystemExit("installers must support a validated Playwright staging-origin allowlist")
 if "scripts/render-mcp-config.js" not in install_sh or "scripts/render-mcp-config.js" not in install_ps1:
     raise SystemExit("installers must render the strict MCP profile through the shared validator")
+if "scripts/render-agent-config.js" not in install_sh or "scripts/render-agent-config.js" not in install_ps1:
+    raise SystemExit("installers must render the agent model configurations through the shared renderer")
 if "--config" not in install_sh or "ConfigPath" not in install_ps1:
     raise SystemExit("installers must expose the versioned MCP install profile")
 if "core-only" not in install_sh or "core-only" not in install_ps1:
@@ -331,6 +335,55 @@ case "${1:-}" in
     if [[ "${EXPECT_CORE_ONLY:-0}" == "1" && -f "${3:-}/mcp_config.json" ]]; then
       printf 'core-only fixture received an enabled mcp_config.json\n' >&2
       exit 9
+    fi
+    if [[ -n "${EXPECT_AGENT_MODELS:-}" ]]; then
+      python3 - "${3:-}" "${EXPECT_AGENT_MODELS}" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+staged_dir = pathlib.Path(sys.argv[1])
+expected_raw = sys.argv[2].strip()
+
+if expected_raw.startswith("{"):
+    expected = json.loads(expected_raw)
+else:
+    expected = {}
+    for item in expected_raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if "=" in item:
+            k, v = item.split("=", 1)
+        elif ":" in item:
+            k, v = item.split(":", 1)
+        else:
+            raise SystemExit(f"invalid item in EXPECT_AGENT_MODELS: {item}")
+        expected[k.strip()] = v.strip()
+
+agents_dir = staged_dir / "agents"
+if not agents_dir.is_dir():
+    raise SystemExit(f"agents directory not found in staged plugin: {agents_dir}")
+
+for agent_name, expected_model in expected.items():
+    agent_file = agents_dir / f"{agent_name}.md"
+    if not agent_file.is_file():
+        raise SystemExit(f"agent file not found: {agent_file}")
+    content = agent_file.read_text(encoding="utf-8")
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        raise SystemExit(f"invalid frontmatter in agent file: {agent_file}")
+    frontmatter = parts[1]
+    match = re.search(r"^model:\s*(\S+)", frontmatter, re.MULTILINE)
+    if not match:
+        raise SystemExit(f"model declaration not found in frontmatter: {agent_file}")
+    actual_model = match.group(1)
+    if actual_model != expected_model:
+        raise SystemExit(
+            f"unexpected model for {agent_name}: got {actual_model}, expected {expected_model}"
+        )
+PY
     fi
     if [[ -n "${EXPECT_MCP_SERVERS:-}" ]]; then
       python3 - "${3:-}" "${EXPECT_MCP_SERVERS}" <<'PY'
@@ -465,7 +518,7 @@ if [[ "${1:-}" == "--version" ]]; then
   printf 'v19.0.0\n'
   exit 0
 fi
-if [[ "${1:-}" == */scripts/render-mcp-config.js ]]; then
+if [[ "${1:-}" == */scripts/render-mcp-config.js || "${1:-}" == */scripts/render-agent-config.js ]]; then
   exec "${HARNESS_TEST_REAL_NODE:?}" "$@"
 fi
 exit 2
@@ -513,7 +566,7 @@ if [[ "${1:-}" == "--version" ]]; then
   printf 'v20.18.1\n'
   exit 0
 fi
-if [[ "${1:-}" == */scripts/render-mcp-config.js ]]; then
+if [[ "${1:-}" == */scripts/render-mcp-config.js || "${1:-}" == */scripts/render-agent-config.js ]]; then
   exec "${HARNESS_TEST_REAL_NODE:?}" "$@"
 fi
 exit 2
@@ -528,6 +581,7 @@ printf '1.10.1\n' > "${fake_bin}/codex-harness-github-mcp-server.version"
 HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${fake_bin}:${PATH}" \
   HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS='https://preview.example.com:8443' \
   EXPECT_PLAYWRIGHT_ORIGIN='https://preview.example.com:8443' \
+  EXPECT_AGENT_MODELS='{"harness-researcher":"inherit","harness-implementer":"inherit"}' \
   ./install.sh > "${test_root}/install-custom-origin.log"
 
 HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${fake_bin}:${PATH}" \
@@ -569,6 +623,34 @@ HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${fake_bin}:${PATH}" \
   EXPECT_PLAYWRIGHT_UNRESTRICTED=1 \
   ./install.sh --config "${selective_profile}" --playwright-unrestricted \
   > "${test_root}/install-profile-override.log"
+
+agent_models_profile="${profile_dir}/agent models profile.json"
+cat > "${agent_models_profile}" <<'JSON'
+{
+  "$schema": "./schemas/harness.config.schema.json",
+  "version": 1,
+  "mcp": {
+    "servers": {
+      "context7": { "enabled": false },
+      "serena": { "enabled": false },
+      "playwright": { "enabled": false, "mode": "loopback", "allowedOrigins": [] },
+      "github": { "enabled": false },
+      "sentry": { "enabled": false }
+    }
+  },
+  "agents": {
+    "defaultModel": "flash",
+    "models": {
+      "harness-researcher": "gemini-3.7-flash-high",
+      "harness-implementer": "gemini-3.8-flash-high"
+    }
+  }
+}
+JSON
+HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${fake_bin}:${PATH}" \
+  EXPECT_CORE_ONLY=1 \
+  EXPECT_AGENT_MODELS='{"harness-researcher":"gemini-3.7-flash-high","harness-implementer":"gemini-3.8-flash-high","harness-reviewer":"flash","harness-verifier":"flash"}' \
+  ./install.sh --config "${agent_models_profile}" > "${test_root}/install-agent-models.log"
 
 partial_profile="${profile_dir}/partial fallback.json"
 cat > "${partial_profile}" <<'JSON'
@@ -612,6 +694,37 @@ set -e
 [[ ! -e "${agy_marker}" ]] || fail 'installer called Antigravity before rejecting an invalid MCP profile'
 grep -Fq 'configuration.mcp.servers' "${test_root}/install-invalid-profile.log" || \
   fail 'installer did not explain the invalid MCP profile'
+
+invalid_agent_profile="${profile_dir}/invalid agent profile.json"
+cat > "${invalid_agent_profile}" <<'JSON'
+{
+  "version": 1,
+  "mcp": {
+    "servers": {
+      "context7": { "enabled": false },
+      "serena": { "enabled": false },
+      "playwright": { "enabled": false, "mode": "loopback", "allowedOrigins": [] },
+      "github": { "enabled": false },
+      "sentry": { "enabled": false }
+    }
+  },
+  "agents": {
+    "models": {
+      "unknown-agent": "flash"
+    }
+  }
+}
+JSON
+set +e
+HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${fake_bin}:${PATH}" \
+  AGY_CALL_MARKER="${agy_marker}" \
+  ./install.sh --config "${invalid_agent_profile}" > "${test_root}/install-invalid-agent.log" 2>&1
+invalid_agent_status="$?"
+set -e
+[[ "${invalid_agent_status}" == "2" ]] || fail 'installer did not reject an invalid agent profile with status 2'
+[[ ! -e "${agy_marker}" ]] || fail 'installer called Antigravity before rejecting an invalid agent profile'
+grep -Fq 'configuration.agents.models' "${test_root}/install-invalid-agent.log" || \
+  fail 'installer did not explain the invalid agent profile'
 
 no_agy_bin="${test_root}/no-agy-bin"
 mkdir -p -- "${no_agy_bin}"

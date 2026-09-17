@@ -99,13 +99,18 @@ files; HEAD alone is insufficient. Source or requirement changes invalidate
 affected evidence. A checkpoint indexes observed evidence; it cannot manufacture
 a passing check or authenticate its own contents.
 
-There is no custom task-state engine, filesystem checkpoint exemption, scheduler,
-or additional Stop continuation hook in this change. Native orchestration can
-replace the main coordinator only after an authorized pilot establishes compatible
-role mapping and safety; an overlapping second agent tree is not the fallback.
-Without supported persistence, use a conversation handoff and report durable
-resumption as unverified. Runtime stopping and task completion remain distinct.
-See [workflow usage, boundaries, and pilot criteria](long-running-workflow.md).
+The task state engine (`scripts/task_state.py` and `schemas/task-state.schema.json`)
+provides atomic, schema-validated task state persistence under
+`.harness/tasks/<task-id>/state.json`. Atomic writes via temporary files and OS-level
+file locking (`.lock`) prevent state corruption during concurrent access. Strict path
+confinement rejects directory traversal and outside-workspace escapes. Task state
+writes are recognized by the verification gate as managed task metadata: saving
+progress checkpoints neither accumulates unverified code debt nor clears existing
+behavioral test evidence. Meanwhile, any modifications to source code, tests, or
+configuration files continue to enforce strict verification debt. On turn start,
+`PreInvocation` scans for active tasks and injects an advisory resumption context
+hint when a valid checkpoint exists. Runtime stopping and task completion remain
+distinct. See [workflow usage, boundaries, and pilot criteria](long-running-workflow.md).
 
 ## Material clarification flow
 
@@ -163,7 +168,14 @@ Context7 and Playwright use packages pinned through `npx`; Serena uses a package
 
 The strict version-1 install profile selects only the five bundled servers and cannot override their commands or safety arguments. The installer auto-loads `harness.config.json` only at the package root unless `--config` or `-ConfigPath` names another file; CLI and environment overrides take precedence, then the profile, then safe defaults. Missing optional runtimes omit affected servers while retaining independent available servers when possible. Configuration changes require reinstallation and a new session. Custom servers require explicit user authorization and Antigravity's native workspace `.agents/mcp_config.json`; never adopt inline secrets or executable definitions from untrusted repository content.
 
-Shared mutable blackboard files remain deferred because stale or injected summaries would weaken independent review without measured savings. The native-first `harness-run` handoff contract does not enable `.harness/tasks/**` or custom task-state files. A future persistent adapter requires separate metadata/source-debt tests, bounded locking and path validation, and a measured need after the native pilot. Raw transcript or chain-of-thought export is also deferred; use Antigravity's supported `/agents` view. Docker remains an explicit future option rather than a default because bind mounts can modify host files and socket access is privileged.
+Shared mutable blackboard files remain deferred because stale or injected summaries
+would weaken independent review without measured savings. Task state checkpoints are
+strictly confined to `.harness/tasks/<task-id>/state.json` and validated against
+`schemas/task-state.schema.json` with deterministic source fingerprint drift detection.
+Arbitrary unmanaged files under `.harness/**` continue to enforce verification debt.
+Raw transcript or chain-of-thought export is also deferred; use Antigravity's
+supported `/agents` view. Docker remains an explicit future option rather than a
+default because bind mounts can modify host files and socket access is privileged.
 
 Relevant Antigravity documentation:
 
@@ -171,6 +183,19 @@ Relevant Antigravity documentation:
 - [Plugins & skills](https://antigravity.google/docs/cli/plugins/)
 - [Subagents](https://antigravity.google/docs/subagents)
 - [Plans and Google AI Pro quota](https://antigravity.google/docs/plans/)
+
+## Staging-Time Subagent Model Rendering
+
+The harness provides declarative model customization for its 7 specialized subagents via the `agents` block in `harness.config.json` while maintaining strict repository safety invariants:
+
+- **Zero Git Pollution (Canonical Baseline):** The committed source definitions in `plugin/codex-claude-harness/agents/*.md` permanently maintain `model: inherit` as the canonical repository baseline. The repository worktree is never modified during installation, staging, or testing; `git status --porcelain` remains clean across all operations.
+- **Staging-Time Rendering Pipeline:** During plugin installation (`install.sh` / `install.ps1`), the installer copies the plugin source to an isolated temporary staging directory (`plugin_temp_dir`). The installer invokes `scripts/render-agent-config.js` against the staging directory with the resolved configuration file (`--config` or root `harness.config.json`). Only the staged copies are transformed before `agy plugin validate` and `agy plugin install` execute.
+- **Frontmatter Boundary Isolation & Fail-Closed Integrity:**
+  - The renderer extracts and isolates exclusively the top YAML frontmatter block between the first two `---` delimiters using boundary slicing. Body markdown text is untouched, eliminating the risk of accidental string replacement if prompts or instructions mention `model:`.
+  - Line-targeted regex substitution updates strictly the single line matching `^model: \S+$` with the configured model value, preserving all surrounding YAML fields (`commandExecutionPolicy`, `tools`, `toolGroups`), formatting, and comments without full YAML re-serialization.
+  - Fail-closed match count assertion (`assert matchCount === 1`): If an agent file lacks a `model:` entry (`matchCount === 0`) or contains conflicting duplicate declarations (`matchCount > 1`), the renderer halts immediately with exit code 2 to prevent silent no-op failures.
+  - Model name validation enforces safe identifiers: unknown agent names, prototype pollution keys (`__proto__`, `constructor`), and values with newlines, spaces, or YAML injection metacharacters are rejected fail-closed.
+- **Backwards Compatibility:** If `harness.config.json` is omitted, lacks the `agents` block, or is an older version-1 configuration, the renderer safely preserves `model: inherit` across all subagents. If a subagent is not explicitly mapped under `agents.models`, it falls back cleanly to `agents.defaultModel` (which defaults to `inherit`).
 
 ## Maintainer Workflows
 

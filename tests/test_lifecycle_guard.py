@@ -769,6 +769,40 @@ class LifecycleGuardTests(unittest.TestCase):
         self.assertLessEqual(len(message.encode("utf-8")), 1024)
 
     @unittest.skipUnless(MODULE._is_safe_dir_fd_supported(), "dir_fd not supported on platform")
+    def test_context_source_hints_extracts_js_ts_and_go(self) -> None:
+        (self.workspace / "server.ts").write_text(
+            "const app = express();\n"
+            "export interface UserProfile {\n  id: string;\n}\n"
+            "app.get('/api/users', (req, res) => {});\n",
+            encoding="utf-8",
+        )
+        (self.workspace / "main.go").write_text(
+            "package main\n\n"
+            "type OrderRecord struct {\n  ID int\n}\n\n"
+            "func main() {\n"
+            "  http.HandleFunc(\"/order\", orderHandler)\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        candidates = MODULE._collect_source_candidates([self.workspace])
+        entry_paths = [c.path for c in candidates["entrypoints"]]
+        model_names = [c.symbol for c in candidates["models"]]
+        handler_paths = [c.path for c in candidates["handlers"]]
+
+        self.assertIn("server.ts", entry_paths)
+        self.assertIn("main.go", entry_paths)
+        self.assertIn("UserProfile", model_names)
+        self.assertIn("OrderRecord", model_names)
+        self.assertIn("server.ts", handler_paths)
+        self.assertIn("main.go", handler_paths)
+
+        result = self.call("context", {"invocationNum": 0})
+        message = result["injectSteps"][0]["ephemeralMessage"]
+        self.assertIn("Candidate source hints:", message)
+        self.assertIn("UserProfile:server.ts", message)
+        self.assertIn("OrderRecord:main.go", message)
+
+    @unittest.skipUnless(MODULE._is_safe_dir_fd_supported(), "dir_fd not supported on platform")
     def test_context_zero_manifest_python_bypasses_both_early_returns(self) -> None:
         (self.workspace / "main.py").write_text(
             "def main():\n    print('zero-manifest')\n",

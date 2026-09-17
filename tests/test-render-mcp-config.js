@@ -47,6 +47,37 @@ test("published schema rejects out-of-range ports and documents normalized uniqu
   assert.match(origins.description, /normalization/);
 });
 
+test("published schema defines $schema and agents definitions matching catalog", () => {
+  const schema = JSON.parse(
+    fs.readFileSync(path.join(ROOT, "schemas", "harness.config.schema.json"), "utf8"),
+  );
+  assert.deepEqual(schema.properties.$schema, { type: "string" });
+  assert.deepEqual(schema.properties.agents, { $ref: "#/$defs/agentsConfig" });
+  assert.deepEqual(schema.required, ["version", "mcp"]);
+
+  const agentsConfig = schema.$defs.agentsConfig;
+  assert.equal(agentsConfig.type, "object");
+  assert.equal(agentsConfig.additionalProperties, false);
+  assert.deepEqual(agentsConfig.properties.defaultModel, { type: "string", minLength: 1 });
+
+  const models = agentsConfig.properties.models;
+  assert.equal(models.type, "object");
+  assert.equal(models.additionalProperties, false);
+  const expectedAgents = [
+    "harness-researcher",
+    "harness-implementer",
+    "harness-reviewer",
+    "harness-verifier",
+    "harness-documenter",
+    "harness-security-auditor",
+    "harness-db-architect",
+  ];
+  assert.deepEqual(Object.keys(models.properties).sort(), [...expectedAgents].sort());
+  for (const agent of expectedAgents) {
+    assert.deepEqual(models.properties[agent], { type: "string", minLength: 1 });
+  }
+});
+
 function runRenderer({ canonical = CANONICAL, config, output, extraArguments = [] }) {
   const args = [RENDERER, "--input", canonical, "--output", output];
   if (config) {
@@ -55,6 +86,79 @@ function runRenderer({ canonical = CANONICAL, config, output, extraArguments = [
   args.push(...extraArguments);
   return spawnSync(process.execPath, args, { encoding: "utf8" });
 }
+
+test("$schema and agents configurations are accepted and validated fail-closed", () => {
+  const directory = makeDirectory();
+  const configPath = path.join(directory, "config.json");
+  const output = path.join(directory, "rendered.json");
+  const config = baselineConfig();
+  assert.equal(config.$schema, "./schemas/harness.config.schema.json");
+  assert.ok(config.agents);
+  writeJson(configPath, config);
+
+  let result = runRenderer({ config: configPath, output });
+  assert.equal(result.status, 0, result.stderr);
+
+  const noSchemaOutput = path.join(directory, "no-schema.json");
+  const noSchemaConfig = baselineConfig();
+  delete noSchemaConfig.$schema;
+  writeJson(configPath, noSchemaConfig);
+  result = runRenderer({ config: configPath, output: noSchemaOutput });
+  assert.equal(result.status, 0, result.stderr);
+
+  const noAgentsOutput = path.join(directory, "no-agents.json");
+  const noAgentsConfig = baselineConfig();
+  delete noAgentsConfig.agents;
+  writeJson(configPath, noAgentsConfig);
+  result = runRenderer({ config: configPath, output: noAgentsOutput });
+  assert.equal(result.status, 0, result.stderr);
+
+  const invalidSchemas = [
+    ["empty string", ""],
+    ["whitespace string", "   "],
+    ["number", 123],
+    ["boolean", true],
+    ["array", ["./schema.json"]],
+    ["object", { url: "./schema.json" }],
+  ];
+  for (const [label, invalidValue] of invalidSchemas) {
+    const invalidOutput = path.join(directory, "invalid-schema.json");
+    const badConfig = baselineConfig();
+    badConfig.$schema = invalidValue;
+    writeJson(configPath, badConfig);
+    const failResult = runRenderer({ config: configPath, output: invalidOutput });
+    assert.equal(failResult.status, 2, `${label} must fail: ${failResult.stderr}`);
+    assert.match(failResult.stderr, /configuration\.\$schema must be a non-empty string/);
+    assert.ok(!fs.existsSync(invalidOutput));
+  }
+
+  const invalidAgents = [
+    ["string", "inherit"],
+    ["number", 42],
+    ["boolean", true],
+    ["array", ["harness-researcher"]],
+    ["null", null],
+  ];
+  for (const [label, invalidValue] of invalidAgents) {
+    const invalidOutput = path.join(directory, "invalid-agents.json");
+    const badConfig = baselineConfig();
+    badConfig.agents = invalidValue;
+    writeJson(configPath, badConfig);
+    const failResult = runRenderer({ config: configPath, output: invalidOutput });
+    assert.equal(failResult.status, 2, `${label} must fail: ${failResult.stderr}`);
+    assert.match(failResult.stderr, /configuration\.agents must be an object/);
+    assert.ok(!fs.existsSync(invalidOutput));
+  }
+
+  const unknownKeyOutput = path.join(directory, "unknown-key.json");
+  const badConfigWithUnknownKey = baselineConfig();
+  badConfigWithUnknownKey.unknownProperty = "rejected";
+  writeJson(configPath, badConfigWithUnknownKey);
+  const unknownResult = runRenderer({ config: configPath, output: unknownKeyOutput });
+  assert.equal(unknownResult.status, 2, unknownResult.stderr);
+  assert.match(unknownResult.stderr, /configuration contains unknown key "unknownProperty"/);
+  assert.ok(!fs.existsSync(unknownKeyOutput));
+});
 
 test("no user config preserves the canonical MCP configuration", () => {
   const directory = makeDirectory();

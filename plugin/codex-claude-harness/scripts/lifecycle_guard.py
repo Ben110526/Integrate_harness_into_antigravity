@@ -25,6 +25,17 @@ import tempfile
 import time
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
+try:
+    import task_state
+except ImportError:
+    _scripts_dir = Path(__file__).resolve().parent
+    if str(_scripts_dir) not in sys.path:
+        sys.path.insert(0, str(_scripts_dir))
+    try:
+        import task_state
+    except ImportError:
+        task_state = None
+
 
 WRITE_TOOLS = {
     "write_to_file",
@@ -39,6 +50,8 @@ MAX_SOURCE_FILE_BYTES = 32 * 1024
 MAX_TOTAL_SCAN_BYTES = 256 * 1024
 MAX_SCANNED_ENTRIES = 150
 MAX_PYTHON_FILES = 15
+MAX_JS_TS_FILES = 10
+MAX_GO_FILES = 5
 MAX_SCAN_DEPTH = 3
 COMMAND_TIMEOUT_SECONDS = 3.0
 FORMAT_TIMEOUT_SECONDS = 5.0
@@ -88,6 +101,39 @@ _TARGET_DIR_NAMES = {
     "handlers",
     "src",
 }
+
+# Regex-based candidate extraction for JS/TS (no import/exec, pure text scan).
+# Patterns are intentionally conservative: only match public-facing symbols.
+_JS_TS_ENTRYPOINT = re.compile(
+    r"(?m)^(?:export\s+default\s+function\s+main\b"
+    r"|(?:const|let|var)\s+app\s*=\s*(?:express|fastify|Fastify|Koa|hapi\.server)\s*\("
+    r"|(?:app|server)\s*\.\s*listen\s*\("
+    r"|createServer\s*\("
+    r")"
+)
+_JS_TS_HANDLER = re.compile(
+    r"(?m)^(?:export\s+(?:async\s+)?function\s+(?:handler|action)\b"
+    r"|(?:router|app)\s*\.\s*(?:get|post|put|patch|delete|all)\s*\(\s*['\"`]"
+    r"|@(?:Get|Post|Put|Patch|Delete|All|Controller)\s*\("
+    r")"
+)
+_JS_TS_MODEL = re.compile(
+    r"(?m)^(?:export\s+(?:interface|type|class)\s+([A-Z][A-Za-z0-9_]{0,64})"
+    r"|@(?:Entity|Table|Schema|Model)\s*\("
+    r")"
+)
+
+# Regex-based candidate extraction for Go (no import/exec, pure text scan).
+_GO_ENTRYPOINT = re.compile(r"(?m)^func\s+main\s*\(\s*\)")
+_GO_HANDLER = re.compile(
+    r"(?m)(?:http\.HandleFunc\s*\(\s*['\"`]"
+    r"|func\s+\(\s*\w+\s+\*?\w+\)\s+\w*[Hh]andler\w*\s*\("
+    r"|r\s*\.\s*(?:GET|POST|PUT|PATCH|DELETE|Any)\s*\(\s*['\"`]"
+    r")"
+)
+_GO_MODEL = re.compile(
+    r"(?m)^type\s+([A-Z][A-Za-z0-9_]{0,64})\s+struct\s*\{"
+)
 
 _PRIVATE_KEY_HEADER = re.compile(
     r"-----BEGIN (?:(?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY|"
@@ -1268,6 +1314,68 @@ def _dedupe_candidates(candidates: List[_SourceCandidate]) -> List[_SourceCandid
     return result
 
 
+def _extract_candidates_from_js_ts(
+    source_text: str,
+    rel_path: str,
+    candidates: Dict[str, List[_SourceCandidate]],
+) -> None:
+    """Regex-based (no import/exec) candidate extraction for JS/TS files."""
+    if not _is_safe_path(rel_path):
+        return
+    for match in _JS_TS_ENTRYPOINT.finditer(source_text):
+        lineno = source_text.count("\n", 0, match.start()) + 1
+        candidates["entrypoints"].append(
+            _SourceCandidate("entrypoints", "", rel_path, lineno)
+        )
+        break  # one entrypoint per file is enough
+    for match in _JS_TS_HANDLER.finditer(source_text):
+        lineno = source_text.count("\n", 0, match.start()) + 1
+        candidates["handlers"].append(
+            _SourceCandidate("handlers", "", rel_path, lineno)
+        )
+        break  # record the first handler per file only
+    for match in _JS_TS_MODEL.finditer(source_text):
+        symbol = match.group(1) if match.lastindex else ""
+        if symbol and not _is_safe_identifier(symbol):
+            continue
+        lineno = source_text.count("\n", 0, match.start()) + 1
+        candidates["models"].append(
+            _SourceCandidate("models", symbol or "", rel_path, lineno)
+        )
+        break  # record the first model per file only
+
+
+def _extract_candidates_from_go(
+    source_text: str,
+    rel_path: str,
+    candidates: Dict[str, List[_SourceCandidate]],
+) -> None:
+    """Regex-based (no import/exec) candidate extraction for Go files."""
+    if not _is_safe_path(rel_path):
+        return
+    for match in _GO_ENTRYPOINT.finditer(source_text):
+        lineno = source_text.count("\n", 0, match.start()) + 1
+        candidates["entrypoints"].append(
+            _SourceCandidate("entrypoints", "main", rel_path, lineno)
+        )
+        break
+    for match in _GO_HANDLER.finditer(source_text):
+        lineno = source_text.count("\n", 0, match.start()) + 1
+        candidates["handlers"].append(
+            _SourceCandidate("handlers", "", rel_path, lineno)
+        )
+        break
+    for match in _GO_MODEL.finditer(source_text):
+        symbol = match.group(1) if match.lastindex else ""
+        if symbol and not _is_safe_identifier(symbol):
+            continue
+        lineno = source_text.count("\n", 0, match.start()) + 1
+        candidates["models"].append(
+            _SourceCandidate("models", symbol or "", rel_path, lineno)
+        )
+        break
+
+
 def _collect_source_candidates(
     roots: Sequence[Path],
     stats: Optional[Dict[str, int]] = None,
@@ -1289,6 +1397,11 @@ def _collect_source_candidates(
     priority_1_files: List[Tuple[Path, Tuple[str, ...], str, str]] = []
     priority_2_files: List[Tuple[Path, Tuple[str, ...], str, str]] = []
     priority_3_files: List[Tuple[Path, Tuple[str, ...], str, str]] = []
+    # JS/TS and Go files share the same priority buckets but are tracked separately
+    # so their per-language file count caps (MAX_JS_TS_FILES, MAX_GO_FILES) apply
+    # without affecting the Python cap.
+    js_ts_files: List[Tuple[Path, Tuple[str, ...], str, str, str]] = []  # extra: lang
+    go_files: List[Tuple[Path, Tuple[str, ...], str, str]] = []
 
     root_fds: Dict[Path, int] = {}
 
@@ -1391,6 +1504,37 @@ def _collect_source_candidates(
                                             priority_2_files.append(item)
                                         else:
                                             priority_3_files.append(item)
+                                    elif entry.name.endswith((".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs")):
+                                        rel_posix = "/".join(
+                                            parent_components + (entry.name,)
+                                        )
+                                        rel_path = (
+                                            "%s/%s" % (root.name, rel_posix)
+                                            if len(roots) > 1
+                                            else rel_posix
+                                        )
+                                        js_ts_files.append((
+                                            root,
+                                            parent_components,
+                                            entry.name,
+                                            rel_path,
+                                            "js_ts",
+                                        ))
+                                    elif entry.name.endswith(".go"):
+                                        rel_posix = "/".join(
+                                            parent_components + (entry.name,)
+                                        )
+                                        rel_path = (
+                                            "%s/%s" % (root.name, rel_posix)
+                                            if len(roots) > 1
+                                            else rel_posix
+                                        )
+                                        go_files.append((
+                                            root,
+                                            parent_components,
+                                            entry.name,
+                                            rel_path,
+                                        ))
                             except OSError:
                                 continue
                         queue.extend(subdirs_target)
@@ -1490,6 +1634,150 @@ def _collect_source_candidates(
                 continue
 
             _extract_candidates_from_tree(tree, rel_path, candidates)
+
+        # Process JS/TS files with regex-based extraction.
+        total_js_ts_files_processed = 0
+        for root, parent_components, filename, rel_path, _lang in js_ts_files:
+            if total_js_ts_files_processed >= MAX_JS_TS_FILES:
+                break
+            if total_bytes_scanned >= MAX_TOTAL_SCAN_BYTES:
+                break
+            remaining_scan_bytes = MAX_TOTAL_SCAN_BYTES - total_bytes_scanned
+            if remaining_scan_bytes <= 0:
+                break
+            root_fd = root_fds.get(root)
+            if root_fd is None:
+                continue
+            to_read = min(MAX_SOURCE_FILE_BYTES + 1, remaining_scan_bytes)
+            raw_bytes = b""
+            bytes_read = 0
+            reached_eof = False
+            fds_to_close_js: List[int] = []
+            try:
+                current_fd = root_fd
+                for comp in parent_components:
+                    current_fd = os.open(
+                        comp,
+                        os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                        dir_fd=current_fd,
+                    )
+                    fds_to_close_js.append(current_fd)
+                fd = os.open(
+                    filename,
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                    dir_fd=current_fd,
+                )
+                fds_to_close_js.append(fd)
+                st = os.fstat(fd)
+                if not stat.S_ISREG(st.st_mode):
+                    continue
+                chunks_js: List[bytes] = []
+                while bytes_read < to_read:
+                    chunk = os.read(fd, to_read - bytes_read)
+                    if not chunk:
+                        reached_eof = True
+                        break
+                    chunks_js.append(chunk)
+                    bytes_read += len(chunk)
+                raw_bytes = b"".join(chunks_js)
+                if bytes_read < to_read:
+                    reached_eof = True
+                else:
+                    reached_eof = False
+            except OSError:
+                continue
+            finally:
+                for fd_val in reversed(fds_to_close_js):
+                    try:
+                        os.close(fd_val)
+                    except OSError:
+                        pass
+            total_bytes_scanned += bytes_read
+            total_js_ts_files_processed += 1
+            if not reached_eof or len(raw_bytes) > MAX_SOURCE_FILE_BYTES:
+                if total_bytes_scanned >= MAX_TOTAL_SCAN_BYTES:
+                    break
+                continue
+            try:
+                source_text = raw_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                try:
+                    source_text = raw_bytes.decode("latin-1")
+                except Exception:
+                    continue
+            _extract_candidates_from_js_ts(source_text, rel_path, candidates)
+
+        # Process Go files with regex-based extraction.
+        total_go_files_processed = 0
+        for root, parent_components, filename, rel_path in go_files:
+            if total_go_files_processed >= MAX_GO_FILES:
+                break
+            if total_bytes_scanned >= MAX_TOTAL_SCAN_BYTES:
+                break
+            remaining_scan_bytes = MAX_TOTAL_SCAN_BYTES - total_bytes_scanned
+            if remaining_scan_bytes <= 0:
+                break
+            root_fd = root_fds.get(root)
+            if root_fd is None:
+                continue
+            to_read = min(MAX_SOURCE_FILE_BYTES + 1, remaining_scan_bytes)
+            raw_bytes = b""
+            bytes_read = 0
+            reached_eof = False
+            fds_to_close_go: List[int] = []
+            try:
+                current_fd = root_fd
+                for comp in parent_components:
+                    current_fd = os.open(
+                        comp,
+                        os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                        dir_fd=current_fd,
+                    )
+                    fds_to_close_go.append(current_fd)
+                fd = os.open(
+                    filename,
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                    dir_fd=current_fd,
+                )
+                fds_to_close_go.append(fd)
+                st = os.fstat(fd)
+                if not stat.S_ISREG(st.st_mode):
+                    continue
+                chunks_go: List[bytes] = []
+                while bytes_read < to_read:
+                    chunk = os.read(fd, to_read - bytes_read)
+                    if not chunk:
+                        reached_eof = True
+                        break
+                    chunks_go.append(chunk)
+                    bytes_read += len(chunk)
+                raw_bytes = b"".join(chunks_go)
+                if bytes_read < to_read:
+                    reached_eof = True
+                else:
+                    reached_eof = False
+            except OSError:
+                continue
+            finally:
+                for fd_val in reversed(fds_to_close_go):
+                    try:
+                        os.close(fd_val)
+                    except OSError:
+                        pass
+            total_bytes_scanned += bytes_read
+            total_go_files_processed += 1
+            if not reached_eof or len(raw_bytes) > MAX_SOURCE_FILE_BYTES:
+                if total_bytes_scanned >= MAX_TOTAL_SCAN_BYTES:
+                    break
+                continue
+            try:
+                source_text = raw_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                try:
+                    source_text = raw_bytes.decode("latin-1")
+                except Exception:
+                    continue
+            _extract_candidates_from_go(source_text, rel_path, candidates)
     finally:
         for r_fd in root_fds.values():
             try:
@@ -1582,6 +1870,41 @@ def _format_source_hints(
     return best_str
 
 
+def _task_context_hints(roots: List[Path]) -> Optional[str]:
+    if not roots or task_state is None:
+        return None
+    for root in roots[:2]:
+        try:
+            tasks = task_state.find_active_tasks(root)
+            if not tasks:
+                continue
+            active_tasks = [
+                t for t in tasks
+                if t.get("status") in {"in_progress", "pending", "blocked"}
+            ]
+            if not active_tasks:
+                continue
+            target_task = active_tasks[0]
+            assessment = task_state.assess_task_resumption(root, target_task)
+            task_id = target_task.get("task_id", "")
+            status = target_task.get("status", "")
+            active_ms = target_task.get("active_milestone", "")
+            acs = target_task.get("acceptance_criteria", [])
+            verified_count = len(assessment.get("valid_ac_ids", []))
+            stale_count = len(assessment.get("stale_ac_ids", []))
+            total_acs = len(acs)
+
+            hint = f"Task resume available: {task_id} [{status}] active milestone: {active_ms}; {verified_count}/{total_acs} ACs verified."
+            if stale_count > 0:
+                hint += f" {stale_count} AC evidence marked stale due to source changes."
+            elif assessment.get("source_clean"):
+                hint += " Source fingerprint matches checkpoint."
+            return hint
+        except Exception:
+            continue
+    return None
+
+
 def _context(payload: Dict[str, Any]) -> Dict[str, Any]:
     invocation = payload.get("invocationNum")
     if not isinstance(invocation, int) or isinstance(invocation, bool) or invocation != 0:
@@ -1609,8 +1932,9 @@ def _context(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     source_candidates = _collect_source_candidates(roots[:4])
     has_source_hints = any(source_candidates.values())
+    task_hint = _task_context_hints(roots[:4])
 
-    if not stacks and not runtime_specs and not topology and not checks and not has_source_hints:
+    if not stacks and not runtime_specs and not topology and not checks and not has_source_hints and not task_hint:
         return {}
 
     runtime_values = []
@@ -1619,9 +1943,11 @@ def _context(payload: Dict[str, Any]) -> Dict[str, Any]:
         version = _runtime_version(label, command, forbidden_executable_roots)
         if version:
             runtime_values.append("%s: %s" % (label, version))
-    if not stacks and not runtime_values and not topology and not checks and not has_source_hints:
+    if not stacks and not runtime_values and not topology and not checks and not has_source_hints and not task_hint:
         return {}
     parts = ["Detected project context (advisory; static manifests and local runtime versions)."]
+    if task_hint:
+        parts.append(task_hint)
     if stacks:
         parts.append("Frameworks: %s." % ", ".join(stacks[:12]))
     if runtime_values:

@@ -76,6 +76,21 @@ function Assert-OnlyServer([string] $ConfigPath, [string[]] $ExpectedServers) {
     }
 }
 
+function Assert-AgentModel([string] $AgentsDir, [string] $AgentName, [string] $ExpectedModel) {
+    $agentFile = Join-Path $AgentsDir "$AgentName.md"
+    if (-not (Test-Path $agentFile -PathType Leaf)) {
+        throw "agent file does not exist: $agentFile"
+    }
+    $content = Get-Content $agentFile -Raw
+    if ($content -notmatch '(?m)^model:\s*(\S+)') {
+        throw "agent file $agentFile has no model line in frontmatter"
+    }
+    $actualModel = $Matches[1]
+    if ($actualModel -ne $ExpectedModel) {
+        throw "agent $AgentName model mismatch: expected $ExpectedModel, got $actualModel"
+    }
+}
+
 $originalHome = $env:HOME
 $originalUserProfile = $env:USERPROFILE
 $originalTmpDir = $env:TMPDIR
@@ -83,6 +98,7 @@ $originalPath = $env:PATH
 $originalAllowedOrigins = $env:HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS
 $originalSkipBootstrap = $env:HARNESS_SKIP_MCP_BOOTSTRAP
 $originalCapture = $env:HARNESS_CAPTURE_MCP
+$originalCaptureAgents = $env:HARNESS_CAPTURE_AGENTS_DIR
 $originalExpectedMcp = $env:HARNESS_EXPECT_MCP_PRESENT
 $originalAgyCallLog = $env:HARNESS_AGY_CALL_LOG
 
@@ -92,7 +108,7 @@ try {
 
     if ($onWindows) {
         $fakeAgy = Join-Path $fakeBin "agy.cmd"
-        Write-TestText $fakeAgy "@echo off`r`necho %*>>`"%HARNESS_AGY_CALL_LOG%`"`r`nif /i not `"%~1`"==`"plugin`" exit /b 20`r`nif `"%HARNESS_EXPECT_MCP_PRESENT%`"==`"1`" if not exist `"%~3\mcp_config.json`" exit /b 21`r`nif `"%HARNESS_EXPECT_MCP_PRESENT%`"==`"0`" if exist `"%~3\mcp_config.json`" exit /b 22`r`nif /i `"%~2`"==`"install`" if exist `"%~3\mcp_config.json`" copy /y `"%~3\mcp_config.json`" `"%HARNESS_CAPTURE_MCP%`" >nul`r`nexit /b 0`r`n"
+        Write-TestText $fakeAgy "@echo off`r`necho %*>>`"%HARNESS_AGY_CALL_LOG%`"`r`nif /i not `"%~1`"==`"plugin`" exit /b 20`r`nif `"%HARNESS_EXPECT_MCP_PRESENT%`"==`"1`" if not exist `"%~3\mcp_config.json`" exit /b 21`r`nif `"%HARNESS_EXPECT_MCP_PRESENT%`"==`"0`" if exist `"%~3\mcp_config.json`" exit /b 22`r`nif /i `"%~2`"==`"install`" if exist `"%~3\mcp_config.json`" copy /y `"%~3\mcp_config.json`" `"%HARNESS_CAPTURE_MCP%`" >nul`r`nif /i `"%~2`"==`"install`" if defined HARNESS_CAPTURE_AGENTS_DIR if exist `"%~3\agents`" xcopy /y /i /e `"%~3\agents`" `"%HARNESS_CAPTURE_AGENTS_DIR%`" >nul`r`nexit /b 0`r`n"
     }
     else {
         $fakeAgy = Join-Path $fakeBin "agy"
@@ -103,6 +119,7 @@ printf '%s\n' "$*" >> "${HARNESS_AGY_CALL_LOG}"
 if [[ "${HARNESS_EXPECT_MCP_PRESENT:-}" == 1 && ! -f "${3:-}/mcp_config.json" ]]; then exit 21; fi
 if [[ "${HARNESS_EXPECT_MCP_PRESENT:-}" == 0 && -f "${3:-}/mcp_config.json" ]]; then exit 22; fi
 if [[ "${2:-}" == install && -f "${3:-}/mcp_config.json" ]]; then /bin/cp "${3}/mcp_config.json" "${HARNESS_CAPTURE_MCP}"; fi
+if [[ "${2:-}" == install && -n "${HARNESS_CAPTURE_AGENTS_DIR:-}" && -d "${3:-}/agents" ]]; then /bin/cp -R "${3}/agents/." "${HARNESS_CAPTURE_AGENTS_DIR}"; fi
 exit 0
 '@
         & chmod +x $fakeAgy
@@ -172,6 +189,7 @@ exit 0
     New-Item -ItemType Directory -Force -Path (Join-Path $automaticPackage "scripts"), (Join-Path $automaticPackage "global") | Out-Null
     Copy-Item -LiteralPath $installerPath -Destination (Join-Path $automaticPackage "install.ps1")
     Copy-Item -LiteralPath (Join-Path $repoRoot "scripts/render-mcp-config.js") -Destination (Join-Path $automaticPackage "scripts/render-mcp-config.js")
+    Copy-Item -LiteralPath (Join-Path $repoRoot "scripts/render-agent-config.js") -Destination (Join-Path $automaticPackage "scripts/render-agent-config.js")
     Copy-Item -LiteralPath (Join-Path $repoRoot "global/GEMINI.md") -Destination (Join-Path $automaticPackage "global/GEMINI.md")
     Copy-Item -LiteralPath (Join-Path $repoRoot "plugin") -Destination (Join-Path $automaticPackage "plugin") -Recurse
     Write-TestConfig (Join-Path $automaticPackage "harness.config.json") @("sentry")
@@ -256,6 +274,48 @@ exit 0
     $env:HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS = $null
     if ($status -ne 0) { throw "HARNESS_SKIP_MCP_BOOTSTRAP did not preserve core-only precedence" }
 
+    $agentModelConfig = Join-Path $testRoot "custom-agent-models.json"
+    $customConfigObj = Get-Content $script:exampleConfigPath -Raw | ConvertFrom-Json
+    foreach ($server in @("context7", "serena", "playwright", "github", "sentry")) {
+        $customConfigObj.mcp.servers.$server.enabled = $false
+    }
+    $customConfigObj.agents.defaultModel = "flash"
+    $customConfigObj.agents.models."harness-researcher" = "gemini-3.7-flash-high"
+    $customConfigObj.agents.models."harness-implementer" = "gemini-3.8-flash-high"
+    Write-TestText $agentModelConfig (($customConfigObj | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
+
+    $capturedAgentsDir = Join-Path $testRoot "captured-agents"
+    New-Item -ItemType Directory -Force -Path $capturedAgentsDir | Out-Null
+    $env:HARNESS_CAPTURE_AGENTS_DIR = $capturedAgentsDir
+    $agentTestLog = Join-Path $testRoot "agent-models-install.log"
+    $status = Invoke-TestInstaller $agentTestLog (Join-Path $testRoot "agent-models-output.json") @("-ConfigPath", $agentModelConfig) "0" $fullPath
+    $env:HARNESS_CAPTURE_AGENTS_DIR = $null
+    if ($status -ne 0) { throw "installer failed with custom agent models: $(Get-Content $agentTestLog -Raw)" }
+    Assert-AgentModel $capturedAgentsDir "harness-researcher" "gemini-3.7-flash-high"
+    Assert-AgentModel $capturedAgentsDir "harness-implementer" "gemini-3.8-flash-high"
+    Assert-AgentModel $capturedAgentsDir "harness-reviewer" "flash"
+
+    $invalidAgentConfig = Join-Path $testRoot "invalid-agent-profile.json"
+    $invalidAgentObj = Get-Content $script:exampleConfigPath -Raw | ConvertFrom-Json
+    foreach ($server in @("context7", "serena", "playwright", "github", "sentry")) {
+        $invalidAgentObj.mcp.servers.$server.enabled = $false
+    }
+    $invalidAgentObj.agents.models."unknown-agent" = "flash"
+    Write-TestText $invalidAgentConfig (($invalidAgentObj | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
+
+    $invalidAgentLog = Join-Path $testRoot "invalid-agent-install.log"
+    $status = Invoke-TestInstaller $invalidAgentLog (Join-Path $testRoot "invalid-agent-output.json") @("-ConfigPath", $invalidAgentConfig) "0" $fullPath
+    if ($status -eq 0 -or (Test-Path $agyCallLog -PathType Leaf)) {
+        throw "invalid agent configuration did not fail closed before invoking agy"
+    }
+    $invalidAgentOutput = Get-Content $invalidAgentLog -Raw
+    if (-not $invalidAgentOutput.Contains("Failed to render agent model configurations")) {
+        throw "installer did not report agent model configuration failure"
+    }
+    if (-not $invalidAgentOutput.Contains("configuration.agents.models")) {
+        throw "installer did not include diagnostic detail for invalid agent configuration"
+    }
+
     $validConfigWithoutNode = Join-Path $testRoot "valid but no node.json"
     Write-TestConfig $validConfigWithoutNode @("sentry")
     $missingNodeLog = Join-Path $testRoot "missing-node-config.log"
@@ -286,6 +346,7 @@ finally {
     $env:HARNESS_PLAYWRIGHT_ALLOWED_ORIGINS = $originalAllowedOrigins
     $env:HARNESS_SKIP_MCP_BOOTSTRAP = $originalSkipBootstrap
     $env:HARNESS_CAPTURE_MCP = $originalCapture
+    $env:HARNESS_CAPTURE_AGENTS_DIR = $originalCaptureAgents
     $env:HARNESS_EXPECT_MCP_PRESENT = $originalExpectedMcp
     $env:HARNESS_AGY_CALL_LOG = $originalAgyCallLog
     if (Test-Path $testRoot) {
