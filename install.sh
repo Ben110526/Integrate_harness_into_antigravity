@@ -366,7 +366,7 @@ prepare_plugin_source() {
   plugin_install_source="${plugin_temp_dir}"
 
   if command -v node >/dev/null 2>&1; then
-    local agent_render_cmd=(node "${script_dir}/scripts/render-agent-config.js" --agents-dir "${plugin_install_source}/agents")
+    local -a agent_render_cmd=(node "${script_dir}/scripts/render-agent-config.js" --agents-dir "${plugin_install_source}/agents")
     if [[ -n "${harness_config_path}" ]]; then
       agent_render_cmd+=(--config "${harness_config_path}")
     fi
@@ -374,8 +374,18 @@ prepare_plugin_source() {
       exit 2
     fi
   elif [[ -n "${harness_config_path}" ]]; then
-    printf 'Error: Node.js 20.18.1+ is required to render custom subagent models: %s\n' "${harness_config_path}" >&2
-    exit 2
+    local has_agent_config="false"
+    if [[ -n "${python_runtime}" && -x "${python_runtime}" ]]; then
+      if "${python_runtime}" -c 'import json, sys; c = json.load(open(sys.argv[1])); sys.exit(0 if (c.get("agents") and (c["agents"].get("defaultModel") or c["agents"].get("models"))) else 1)' "${harness_config_path}" 2>/dev/null; then
+        has_agent_config="true"
+      fi
+    elif grep -Eq '"agents"[[:space:]]*:' "${harness_config_path}" 2>/dev/null; then
+      has_agent_config="true"
+    fi
+    if [[ "${has_agent_config}" == "true" ]]; then
+      printf 'Error: Node.js 20.18.1+ is required to render custom subagent models: %s\n' "${harness_config_path}" >&2
+      exit 2
+    fi
   fi
 
   if [[ -n "${python_runtime}" ]]; then

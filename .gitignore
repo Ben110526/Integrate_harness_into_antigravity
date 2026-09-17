@@ -4,3 +4,6 @@ __pycache__/
 docs/local-audit.md
 .serena/
 .claude/
+harness.config.json
+DE_XUAT_TOI_UU_AI_WORKFLOW.md
+PLAN_*.md

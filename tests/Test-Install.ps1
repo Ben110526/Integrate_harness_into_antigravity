@@ -279,9 +279,13 @@ exit 0
     foreach ($server in @("context7", "serena", "playwright", "github", "sentry")) {
         $customConfigObj.mcp.servers.$server.enabled = $false
     }
-    $customConfigObj.agents.defaultModel = "flash"
-    $customConfigObj.agents.models."harness-researcher" = "gemini-3.7-flash-high"
-    $customConfigObj.agents.models."harness-implementer" = "gemini-3.8-flash-high"
+    $customConfigObj.agents = [PSCustomObject]@{
+        defaultModel = "flash"
+        models = [PSCustomObject]@{
+            "harness-researcher" = "gemini-3.7-flash-high"
+            "harness-implementer" = "gemini-3.8-flash-high"
+        }
+    }
     Write-TestText $agentModelConfig (($customConfigObj | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
 
     $capturedAgentsDir = Join-Path $testRoot "captured-agents"
@@ -300,7 +304,11 @@ exit 0
     foreach ($server in @("context7", "serena", "playwright", "github", "sentry")) {
         $invalidAgentObj.mcp.servers.$server.enabled = $false
     }
-    $invalidAgentObj.agents.models."unknown-agent" = "flash"
+    $invalidAgentObj.agents = [PSCustomObject]@{
+        models = [PSCustomObject]@{
+            "unknown-agent" = "flash"
+        }
+    }
     Write-TestText $invalidAgentConfig (($invalidAgentObj | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
 
     $invalidAgentLog = Join-Path $testRoot "invalid-agent-install.log"

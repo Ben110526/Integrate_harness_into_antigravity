@@ -23,15 +23,6 @@
     }
   },
   "agents": {
-    "defaultModel": "inherit",
-    "models": {
-      "harness-researcher": "gemini-3.7-flash-high",
-      "harness-implementer": "gemini-3.8-flash-high",
-      "harness-reviewer": "gemini-3.8-flash-high",
-      "harness-verifier": "gemini-3.7-flash-high",
-      "harness-documenter": "gemini-3.7-flash-medium",
-      "harness-security-auditor": "gemini-3.8-flash-high",
-      "harness-db-architect": "gemini-3.8-flash-high"
-    }
+    "defaultModel": "inherit"
   }
 }
