@@ -1847,6 +1847,73 @@ def _event(name: str, args: dict[str, Any], payload: dict[str, Any]) -> dict[str
     return {}
 
 
+
+
+def _unique_contract_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("Duplicate JSON key in completion contract/result")
+        value[key] = item
+    return value
+
+
+def _validate_acceptance_cases(row: dict[str, Any], case_ids: set[str]) -> None:
+    cases = row.get("cases")
+    if not isinstance(cases, list) or not 1 <= len(cases) <= 16:
+        raise ValueError("Each version-2 AC needs 1-16 acceptance cases")
+    for case in cases:
+        if not isinstance(case, dict) or set(case) != {"id", "kind", "scenario", "expected", "basis"}:
+            raise ValueError("Invalid acceptance case")
+        identifier = case["id"]
+        if not isinstance(identifier, str) or not re.fullmatch(r"TC-[1-9][0-9]{0,3}", identifier) or identifier in case_ids:
+            raise ValueError("Acceptance case IDs must be unique")
+        case_ids.add(identifier)
+        kinds = {"static"} if row["verification"] == "static" else {"normal", "boundary", "failure"}
+        if not isinstance(case["kind"], str) or case["kind"] not in kinds:
+            raise ValueError("Case kind does not match AC verification")
+        for field in ("scenario", "expected", "basis"):
+            if not isinstance(case[field], str) or not case[field].strip() or len(case[field]) > 2000:
+                raise ValueError("Cases need bounded scenarios, expected outcomes and business-rule sources")
+
+
+def _validate_coverage_review(review: Any, ids: set[str]) -> None:
+    # This records a required workflow result; JSON cannot authenticate a reviewer
+    # or establish semantic coverage. Native independent review remains mandatory.
+    if not isinstance(review, dict) or set(review) != {"reviewer", "reviewedIds", "unresolvedIds"}:
+        raise ValueError("Version-2 contract needs a coverage review")
+    if review["reviewer"] != "harness-reviewer":
+        raise ValueError("Coverage review must name the independent reviewer role")
+    for field in ("reviewedIds", "unresolvedIds"):
+        values = review[field]
+        if not isinstance(values, list) or not all(isinstance(value, str) for value in values) or len(set(values)) != len(values):
+            raise ValueError("Invalid coverage-review inventory")
+        if not set(values) <= ids:
+            raise ValueError("Coverage review references unknown ACs")
+    if set(review["reviewedIds"]) != ids:
+        raise ValueError("Coverage review must include every AC")
+
+
+def _validate_case_evidence(row: dict[str, Any], requirement: dict[str, Any], steps: list[int]) -> None:
+    cases = {case["id"] for case in requirement["cases"]}
+    evidence = row.get("caseEvidence")
+    if not isinstance(evidence, list) or len(evidence) != len(cases):
+        raise ValueError("A passed version-2 AC needs evidence for every acceptance case")
+    seen = set()
+    for item in evidence:
+        if not isinstance(item, dict) or set(item) != {"caseId", "step", "test", "assertion"}:
+            raise ValueError("Invalid case evidence")
+        identifier = item["caseId"]
+        if not isinstance(identifier, str) or identifier not in cases or identifier in seen:
+            raise ValueError("Unknown or duplicate acceptance case evidence")
+        seen.add(identifier)
+        if type(item["step"]) is not int or item["step"] not in steps:
+            raise ValueError("Case evidence must reference the AC's observed check steps")
+        for field in ("test", "assertion"):
+            if not isinstance(item[field], str) or not item[field].strip() or len(item[field]) > 2000:
+                raise ValueError("Case evidence needs a test ID and the checked assertion/outcome")
+
+
 def _register_contract(
     state: dict[str, Any], name: str, args: dict[str, Any], payload: dict[str, Any], step: int
 ) -> bool:
@@ -1872,15 +1939,20 @@ def _register_contract(
         raw = args.get("CodeContent")
         if not isinstance(raw, str) or len(raw.encode("utf-8")) > MAX_RESPONSE_BYTES:
             raise ValueError("invalid contract size")
-        contract = json.loads(raw)
-        if not isinstance(contract, dict) or type(contract.get("version")) is not int or contract["version"] != 1:
+        contract = json.loads(raw, object_pairs_hook=_unique_contract_object)
+        if not isinstance(contract, dict) or type(contract.get("version")) is not int or contract["version"] not in {1, 2}:
             raise ValueError("invalid version")
+        version = contract["version"]
+        if version == 2 and set(contract) != {"version", "requirements", "coverageReview"}:
+            raise ValueError("invalid version-2 contract properties")
         rows = contract.get("requirements")
         if not isinstance(rows, list) or not 1 <= len(rows) <= MAX_REQUIREMENTS:
             raise ValueError("invalid inventory")
         ids = set()
+        case_ids: set[str] = set()
         for row in rows:
-            if not isinstance(row, dict) or set(row) != {"id", "request", "acceptance", "verification"}:
+            fields = {"id", "request", "acceptance", "verification"} | ({"cases"} if version == 2 else set())
+            if not isinstance(row, dict) or set(row) != fields:
                 raise ValueError("invalid requirement")
             identifier = row["id"]
             if not isinstance(identifier, str) or not re.fullmatch(r"AC-[1-9][0-9]{0,3}", identifier) or identifier in ids:
@@ -1893,15 +1965,23 @@ def _register_contract(
                     raise ValueError("invalid requirement text")
             if row["request"] not in content:
                 raise ValueError("ungrounded request quote")
+            if version == 2:
+                _validate_acceptance_cases(row, case_ids)
+        review = contract.get("coverageReview")
+        if version == 2:
+            _validate_coverage_review(review, ids)
         if isinstance(previous, dict) and previous.get("userStep") == user_step:
-            if previous.get("requirements") != rows:
-                raise ValueError("inventory changed within a turn")
+            if (previous.get("requirements") != rows or previous.get("version", 1) != version
+                    or previous.get("coverageReview") != review):
+                raise ValueError("inventory or coverage review changed within a turn")
             return state.pop("taskContractError", None) is not None
         late = any(user_step < write < step for write in state.get("writeSteps", []))
         state["taskContract"] = {
             "userStep": user_step, "registeredStep": step,
-            "requirements": rows, "late": late,
+            "requirements": rows, "late": late, "version": version,
         }
+        if version == 2:
+            state["taskContract"]["coverageReview"] = review
         state["failedChecks"] = {
             command: failed_step for command, failed_step in state.get("failedChecks", {}).items()
             if failed_step > user_step
@@ -1966,7 +2046,7 @@ def _completion_status(payload: dict[str, Any], state: dict[str, Any]) -> tuple[
     try:
         if len(result_lines) != 1:
             raise ValueError("Include exactly one single-line HARNESS_RESULT JSON envelope.")
-        result = json.loads(result_lines[0])
+        result = json.loads(result_lines[0], object_pairs_hook=_unique_contract_object)
         if not isinstance(result, dict) or result.get("status") not in {"complete", "partial", "blocked"}:
             raise ValueError("Result status must be complete, partial, or blocked.")
         rows = result.get("requirements")
@@ -1999,6 +2079,10 @@ def _completion_status(payload: dict[str, Any], state: dict[str, Any]) -> tuple[
                     raise ValueError("A behavioral AC cannot pass with static-only evidence.")
                 if any(item["command"] == check["command"] and not item["success"] and item["step"] > step for item in checks.values()):
                     raise ValueError("A later failure invalidates the cited check; rerun or mark the AC unfinished.")
+            if contract.get("version", 1) == 2:
+                if row["id"] in contract["coverageReview"]["unresolvedIds"]:
+                    raise ValueError("An AC with an unresolved business rule or coverage gap cannot pass")
+                _validate_case_evidence(row, expected[row["id"]], steps)
             passed += 1
         if result["status"] == "complete":
             if contract.get("late") or any(user_step < write < contract["registeredStep"] for write in state.get("writeSteps", [])):

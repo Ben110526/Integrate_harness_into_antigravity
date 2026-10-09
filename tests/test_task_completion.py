@@ -414,5 +414,105 @@ class TaskCompletionTests(unittest.TestCase):
         self.assertContinues(self.finish_text("Harness: IMPLEMENT; mode: inline-fast-path; passed: all; failed/skipped: none"))
 
 
+    def v2_contract(self, unresolved=None):
+        requirement = self.requirement()
+        requirement["cases"] = [{"id": "TC-1", "kind": "normal", "scenario": "add(2, 3)",
+                                  "expected": "5", "basis": "User request: add"}]
+        return {"version": 2, "requirements": [requirement],
+                "coverageReview": {"reviewer": "harness-reviewer", "reviewedIds": ["AC-1"],
+                                   "unresolvedIds": unresolved or []}}
+
+    def register_v2(self, contract=None, step=2):
+        contract = contract or self.v2_contract()
+        return self.register(step=step, **contract)
+
+    def v2_row(self, **overrides):
+        return self.row(caseEvidence=[{"caseId": "TC-1", "step": 4, "test": "test_add", "assertion": "add(2,3) == 5"}], **overrides)
+
+    def test_v2_reviewed_cases_accept_current_observed_evidence(self):
+        self.register_v2()
+        self.write(step=3)
+        self.command(4, "python3 -m pytest -q")
+        self.assertAllows(self.finish(rows=[self.v2_row()]))
+
+    def test_v2_case_mapping_is_required_for_pass(self):
+        self.register_v2()
+        self.write(step=3)
+        self.command(4, "python3 -m pytest -q")
+        self.assertContinues(self.finish())
+
+    def test_v2_missing_independent_coverage_inventory_is_invalid(self):
+        contract = self.v2_contract()
+        contract["coverageReview"]["reviewedIds"] = []
+        self.register_v2(contract)
+        self.command(4, "python3 -m pytest -q")
+        self.assertContinues(self.finish(rows=[self.v2_row()]))
+
+    def test_v2_unresolved_business_rule_cannot_pass_but_can_report_blocked(self):
+        self.register_v2(self.v2_contract(["AC-1"]))
+        self.command(4, "python3 -m pytest -q")
+        self.assertContinues(self.finish(rows=[self.v2_row()]))
+        self.assertAllows(self.finish(status="blocked", rows=[self.row(status="blocked", evidence=[], reason="Business rule unresolved")]))
+
+    def test_v2_cases_cannot_be_changed_within_turn(self):
+        self.register_v2()
+        contract = self.v2_contract()
+        contract["requirements"][0]["cases"][0]["expected"] = "4"
+        self.register_v2(contract, step=3)
+        self.command(4, "python3 -m pytest -q")
+        self.assertContinues(self.finish(rows=[self.v2_row()]))
+
+    def test_v2_review_cannot_be_rewritten_to_remove_unresolved_rule(self):
+        self.register_v2(self.v2_contract(["AC-1"]))
+        self.register_v2(self.v2_contract(), step=3)
+        self.command(4, "python3 -m pytest -q")
+        self.assertContinues(self.finish(rows=[self.v2_row()]))
+
+    def test_v2_case_evidence_must_cover_unique_known_cases(self):
+        self.register_v2()
+        self.command(4, "python3 -m pytest -q")
+        valid = self.v2_row()
+        bad_lists = [[], [dict(valid["caseEvidence"][0], caseId="TC-9")], valid["caseEvidence"] * 2,
+                     [dict(valid["caseEvidence"][0], step=999)], [dict(valid["caseEvidence"][0], test="")],
+                     [dict(valid["caseEvidence"][0], assertion="")]]
+        for evidence in bad_lists:
+            with self.subTest(evidence=evidence):
+                row = self.row(caseEvidence=evidence)
+                self.assertContinues(self.finish(rows=[row]))
+
+    def test_v2_truthful_partial_does_not_require_fabricated_case_evidence(self):
+        self.register_v2()
+        self.assertAllows(self.finish(status="partial", rows=[self.row(status="unverified", evidence=[], reason="Check unavailable")]))
+
+    def test_v2_static_case_requires_static_kind(self):
+        contract = self.v2_contract()
+        contract["requirements"][0]["verification"] = "static"
+        self.register_v2(contract)
+        self.command(4, "python3 -m pytest -q")
+        self.assertContinues(self.finish(rows=[self.v2_row()]))
+
+    def test_v2_valid_static_acceptance(self):
+        contract = self.v2_contract()
+        contract["requirements"][0]["verification"] = "static"
+        contract["requirements"][0]["cases"][0]["kind"] = "static"
+        self.register_v2(contract)
+        self.command(4, "ruff check .")
+        self.assertAllows(self.finish(rows=[self.v2_row()]))
+
+
+    def test_duplicate_json_result_keys_cannot_hide_inconsistent_status(self):
+        self.prepared()
+        result = '{"status":"partial","status":"complete","requirements":' + json.dumps([self.row()]) + '}'
+        self.assertContinues(self.finish_text("HARNESS_RESULT: " + result))
+
+    def test_duplicate_review_keys_cannot_remove_business_blocker(self):
+        contract = self.v2_contract(["AC-1"])
+        raw = json.dumps(contract).replace('"unresolvedIds": ["AC-1"]', '"unresolvedIds": ["AC-1"], "unresolvedIds": []')
+        target = self.artifacts / "harness-task-contract.json"
+        self.post(2, "write_to_file", {"IsArtifact": True, "TargetFile": str(target), "CodeContent": raw})
+        self.command(4, "python3 -m pytest -q")
+        self.assertContinues(self.finish(rows=[self.v2_row()]))
+
+
 if __name__ == "__main__":
     unittest.main()

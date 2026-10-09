@@ -159,6 +159,21 @@ class TaskStateValidationTests(unittest.TestCase):
                 valid, errors = task_state.validate_task_state(state)
                 self.assertFalse(valid)
 
+    def test_source_fingerprint_metadata_and_scopes_are_strict(self) -> None:
+        for metadata in (None, {}, {"version": 1, "scope": "auto", "max_files": 150},
+                         {"version": 2, "scope": "unknown", "max_files": 150},
+                         {"version": 2, "scope": "auto", "max_files": 0}):
+            with self.subTest(metadata=metadata):
+                state = copy.deepcopy(self.valid_state)
+                state["source_fingerprint_metadata"] = metadata
+                valid, errors = task_state.validate_task_state(state)
+                self.assertFalse(valid, errors)
+        for path in ("../escape.py", "/outside.py", "./app.py"):
+            state = copy.deepcopy(self.valid_state)
+            state["source_fingerprint"] = {path: "a" * 64}
+            valid, errors = task_state.validate_task_state(state)
+            self.assertFalse(valid, errors)
+
     def test_unexpected_keys_rejected(self) -> None:
         state = copy.deepcopy(self.valid_state)
         state["unsupported_custom_key"] = "forbidden"
@@ -217,7 +232,7 @@ class TaskStateStorageAndConfinementTests(unittest.TestCase):
                     "status": "verified",
                 },
             ],
-            "source_fingerprint": task_state.compute_source_fingerprint(self.workspace),
+            **task_state.capture_source_snapshot(self.workspace),
         }
 
     def tearDown(self) -> None:
@@ -343,6 +358,7 @@ class TaskResumptionAndFingerprintTests(unittest.TestCase):
                 },
             ],
             "source_fingerprint": self.initial_fp,
+            "source_fingerprint_metadata": {"version": 2, "scope": "auto", "max_files": 150},
         }
         task_state.save_task_state(self.workspace, self.state)
 
@@ -418,6 +434,209 @@ class TaskResumptionAndFingerprintTests(unittest.TestCase):
         self.assertIn("marked stale", hint_stale)
 
 
+class SourceFingerprintCoverageTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.workspace = Path(self.temp_dir.name).resolve()
+        self.state = {
+            "schema_version": 1, "task_id": "coverage", "workspace": str(self.workspace),
+            "status": "in_progress", "brief_revision": "v1", "active_milestone": "M1",
+            "milestones": [{"id": "M1", "title": "Check", "status": "in_progress"}],
+            "acceptance_criteria": [{"id": "AC-1", "outcome": "Covered", "status": "verified"}],
+            "source_fingerprint": {},
+        }
+
+    def snapshot(self, paths=None, max_files=150):
+        self.state.update(task_state.capture_source_snapshot(self.workspace, paths, max_files))
+        task_state.save_task_state(self.workspace, self.state)
+
+    def assess(self):
+        return task_state.assess_task_resumption(self.workspace, "coverage")
+
+    def assert_stale(self, path=None):
+        result = self.assess()
+        self.assertFalse(result["source_clean"])
+        self.assertEqual(result["valid_ac_ids"], [])
+        self.assertEqual(result["stale_ac_ids"], ["AC-1"])
+        if path is not None:
+            self.assertIn(path, result["changed_files"])
+        return result
+
+    def symlink(self, path, target):
+        try:
+            path.symlink_to(target)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"Symlink creation unavailable in this environment: {error}")
+
+    def test_explicit_absent_path_is_retained_and_later_creation_stales_evidence(self):
+        # Original reproduction: an explicitly scoped missing future.py became {}.
+        fingerprint = task_state.compute_source_fingerprint(self.workspace, paths=["future.py"])
+        self.assertIn("future.py", fingerprint)
+        self.snapshot(["future.py"])
+        self.assertTrue(self.assess()["source_clean"])
+        (self.workspace / "future.py").write_text("print('new')\n")
+        self.assert_stale("future.py")
+
+    def test_present_to_missing_then_new_missing_baseline_to_present(self):
+        path = self.workspace / "app.py"
+        path.write_text("print(1)\n")
+        self.snapshot(["app.py"])
+        path.unlink()
+        self.assertIn("app.py", self.assert_stale("app.py")["missing_files"])
+        self.snapshot(["app.py"])
+        self.assertTrue(self.assess()["source_clean"])
+        path.write_text("print(1)\n")
+        self.assert_stale("app.py")
+
+    def test_file_directory_transitions_stale_even_with_same_path(self):
+        path = self.workspace / "app.py"
+        path.write_text("print(1)\n")
+        self.snapshot(["app.py"])
+        path.unlink()
+        path.mkdir()
+        self.assert_stale("app.py")
+        self.snapshot(["app.py"])
+        path.rmdir()
+        path.write_text("print(1)\n")
+        self.assert_stale("app.py")
+
+    @unittest.skipIf(os.name == "nt", "POSIX permission-mode mutation is not available on Windows")
+    def test_permission_mode_change_stales_unchanged_content(self):
+        path = self.workspace / "app.py"
+        path.write_text("print(1)\n")
+        path.chmod(0o644)
+        self.snapshot(["app.py"])
+        path.chmod(0o755)
+        self.assert_stale("app.py")
+
+    def test_file_symlink_and_link_target_transitions_are_distinct(self):
+        path = self.workspace / "app.py"
+        target = self.workspace / "target.py"
+        target.write_text("same")
+        path.write_text("same")
+        self.snapshot(["app.py"])
+        path.unlink()
+        self.symlink(path, "target.py")
+        self.assert_stale("app.py")
+        self.snapshot(["app.py"])
+        target.write_text("changed")
+        self.assert_stale("app.py")
+        self.snapshot(["app.py"])
+        second = self.workspace / "second.py"
+        second.write_text("changed")
+        path.unlink()
+        self.symlink(path, "second.py")
+        self.assert_stale("app.py")
+        self.snapshot(["app.py"])
+        path.unlink()
+        path.write_text("changed")
+        self.assert_stale("app.py")
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFO file type is unavailable on this platform")
+    def test_nonregular_type_is_recorded_without_opening_it(self):
+        path = self.workspace / "app.py"
+        os.mkfifo(path)
+        self.snapshot(["app.py"])
+        self.assertTrue(self.assess()["source_clean"])
+        path.unlink()
+        path.write_text("now regular")
+        self.assert_stale("app.py")
+
+    def test_legacy_snapshot_loads_but_cannot_preserve_verified_evidence(self):
+        path = self.workspace / "app.py"
+        path.write_text("same")
+        self.state["source_fingerprint"] = {"app.py": hashlib.sha256(path.read_bytes()).hexdigest()}
+        task_state.save_task_state(self.workspace, self.state)
+        self.assertIsNotNone(task_state.load_task_state(self.workspace, "coverage"))
+        result = self.assert_stale()
+        self.assertTrue(result["can_resume"])
+        self.assertTrue(any("legacy" in reason.casefold() for reason in result["reasons"]))
+
+    def test_v2_reuse_requires_matching_absolute_workspace(self):
+        (self.workspace / "app.py").write_text("same")
+        self.snapshot(["app.py"])
+        for stored in (None, "", os.path.relpath(self.workspace), str(self.workspace.parent)):
+            with self.subTest(stored=stored):
+                state = copy.deepcopy(self.state)
+                if stored is None:
+                    state.pop("workspace")
+                else:
+                    state["workspace"] = stored
+                result = task_state.assess_task_resumption(self.workspace, state)
+                self.assertFalse(result["source_clean"])
+                self.assertEqual(result["valid_ac_ids"], [])
+                self.assertEqual(result["stale_ac_ids"], ["AC-1"])
+                self.assertTrue(any("workspace" in reason.casefold() for reason in result["reasons"]))
+        for stored in (str(self.workspace), str(self.workspace / ".." / self.workspace.name)):
+            with self.subTest(canonical=stored):
+                state = copy.deepcopy(self.state)
+                state["workspace"] = stored
+                result = task_state.assess_task_resumption(self.workspace, state)
+                self.assertTrue(result["source_clean"])
+                self.assertEqual(result["valid_ac_ids"], ["AC-1"])
+
+    def test_legacy_missing_workspace_can_resume_only_for_reconstruction(self):
+        self.state.pop("workspace")
+        result = task_state.assess_task_resumption(self.workspace, self.state)
+        self.assertTrue(result["can_resume"])
+        self.assertFalse(result["source_clean"])
+        self.assertEqual(result["stale_ac_ids"], ["AC-1"])
+
+    def test_auto_snapshot_detects_added_source_file(self):
+        (self.workspace / "app.py").write_text("same")
+        self.snapshot()
+        (self.workspace / "new.py").write_text("new")
+        self.assert_stale("new.py")
+
+    def test_truncated_auto_scan_never_returns_a_blessed_subset(self):
+        (self.workspace / "one.py").write_text("1")
+        (self.workspace / "two.py").write_text("2")
+        with self.assertRaisesRegex(ValueError, "max_files"):
+            task_state.compute_source_fingerprint(self.workspace, max_files=1)
+        self.snapshot(max_files=2)
+        (self.workspace / "three.py").write_text("3")
+        result = self.assert_stale()
+        self.assertTrue(any("max_files" in reason for reason in result["reasons"]))
+
+    def test_symlink_escape_is_untrusted_without_reading_target_contents(self):
+        with tempfile.TemporaryDirectory() as other:
+            target = Path(other) / "outside.py"
+            target.write_text("private")
+            self.symlink(self.workspace / "app.py", target)
+            with self.assertRaisesRegex(ValueError, "escapes workspace"):
+                task_state.capture_source_snapshot(self.workspace, ["app.py"])
+
+    def test_source_read_error_invalidates_existing_snapshot(self):
+        from unittest import mock
+        (self.workspace / "app.py").write_text("same")
+        self.snapshot(["app.py"])
+        with mock.patch.object(task_state.os, "open", side_effect=PermissionError("Fixture denies source reads")):
+            result = self.assert_stale()
+        self.assertTrue(any("could not be established" in reason for reason in result["reasons"]))
+
+    def test_auto_directory_symlink_cannot_silently_omit_inputs(self):
+        source_dir = self.workspace / "source"
+        source_dir.mkdir()
+        (source_dir / "app.py").write_text("same")
+        try:
+            (self.workspace / "alias").symlink_to(source_dir, target_is_directory=True)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"Directory symlink creation unavailable in this environment: {error}")
+        with self.assertRaisesRegex(ValueError, "directory symlink"):
+            task_state.capture_source_snapshot(self.workspace)
+
+    def test_completed_task_drift_cannot_preserve_stale_verified_evidence(self):
+        path = self.workspace / "app.py"
+        path.write_text("same")
+        self.snapshot(["app.py"])
+        self.state["status"] = "completed"
+        task_state.save_task_state(self.workspace, self.state)
+        path.write_text("changed")
+        result = self.assert_stale("app.py")
+        self.assertFalse(result["can_resume"])
+
+
 class TaskStateCLITests(unittest.TestCase):
     """Test CLI commands: init, list, validate, resume, fingerprint."""
 
@@ -429,6 +648,42 @@ class TaskStateCLITests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
+
+    def init_command(self, *arguments):
+        import subprocess
+        return subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "task_state.py"), "init", "--task-id", "scoped-cli",
+             "--workspace", str(self.workspace), *arguments], capture_output=True, text=True,
+        )
+
+    def test_cli_init_explicit_missing_scope_and_metadata(self):
+        result = self.init_command("--scope-path", "src/main.py", "--scope-path", "future.py", "--max-files", "2")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state = task_state.load_task_state(self.workspace, "scoped-cli")
+        self.assertIsNotNone(state)
+        self.assertEqual(set(state["source_fingerprint"]), {"src/main.py", "future.py"})
+        self.assertEqual(state["source_fingerprint_metadata"], {"version": 2, "scope": "explicit", "max_files": 2})
+        self.assertTrue(task_state.assess_task_resumption(self.workspace, state)["source_clean"])
+
+    def test_cli_truncated_init_fails_actionably_without_partial_checkpoint(self):
+        (self.workspace / "src" / "second.py").write_text("print(2)")
+        result = self.init_command("--max-files", "1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("max_files", result.stderr)
+        self.assertIn("--scope-path", result.stderr)
+        self.assertIn("--max-files", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse((self.workspace / ".harness" / "tasks" / "scoped-cli").exists())
+        successful = self.init_command("--max-files", "2")
+        self.assertEqual(successful.returncode, 0, successful.stderr)
+
+    def test_cli_max_files_is_bounded_without_partial_checkpoint(self):
+        for value in ("0", "10001"):
+            with self.subTest(value=value):
+                result = self.init_command("--max-files", value)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertFalse((self.workspace / ".harness" / "tasks" / "scoped-cli").exists())
 
     def test_cli_init_list_validate_resume(self) -> None:
         import io

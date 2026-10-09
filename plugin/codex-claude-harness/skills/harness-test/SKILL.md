@@ -7,6 +7,13 @@ description: Discover and run the right verification ladder for a change or repo
 
 1. Discover existing project commands from manifests, CI configuration, and repository instructions.
 2. Build a verification ladder: reproduction or focused test, affected package suite, lint/type check, build, then broader integration checks as justified. Map each supplied `AC-*` to at least one check or mark it `[UNRESOLVED]` with the missing evidence.
+For version-2 contracts, cover every declared `TC-*` case. Return the actual test
+ID and assertion/observed outcome with its successful tool step. Use independent
+failure/boundary probes where needed; keep scratch checks separate from protected
+product tests. Shared suites are valid when their actual assertions cover each
+claimed case. This mapping is reviewed evidence, not semantic proof supplied by
+an ID or model-written record.
+
 3. Run independent long checks concurrently when safe and when they do not compete for the same mutable resources.
 4. Record exact commands and exit results; preserve the useful failure excerpt.
    Use an explicit in-workspace `Cwd` and literal in-scope test/config targets;

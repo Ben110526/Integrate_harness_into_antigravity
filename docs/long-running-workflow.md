@@ -152,6 +152,34 @@ python3 scripts/task_state.py resume task-123
 python3 scripts/task_state.py validate .harness/tasks/task-123/state.json
 ```
 
+## Typed source snapshots and legacy checkpoints
+
+New checkpoints use `capture_source_snapshot(workspace, paths=...)` from
+`scripts/task_state.py` and persist both returned fields: `source_fingerprint`
+and `source_fingerprint_metadata`. Schema version 1 remains loadable; metadata
+version 2 identifies typed digests covering file content, kind/mode, missing
+paths and safe link state. For explicit scopes, enumerate actual relevant source,
+tests and configuration inputs, including files not yet present. A directory entry
+records that directory's kind/mode; it is not recursive file coverage.
+
+The missing ↔ present, delete, kind/mode/link changes invalidate old evidence.
+Default auto scopes are rescanned with the recorded bounded policy to catch added
+files; an unreadable/unsafe or truncated scan is incomplete, never clean. Use a
+narrow explicit complete scope rather than increasing scan limits blindly.
+Legacy checkpoints without v2 metadata still load, but their old verified ACs
+become stale with a migration reason. Reinspect and rerun relevant checks, then
+capture a new snapshot; never upgrade legacy evidence merely by adding metadata.
+For CLI initialization, pass a complete narrow scope when needed:
+
+```bash
+python3 scripts/task_state.py init --task-id my-task --workspace /absolute/repo --scope-path src/app.py --scope-path tests/test_app.py --scope-path future.py --max-files 3
+```
+
+`--scope-path` may be repeated; omitted scope uses the bounded automatic policy.
+A failed snapshot does not write an incomplete checkpoint.
+The existing `compute_source_fingerprint(...)` dictionary API remains available,
+but persistence callers need the companion metadata from the capture helper.
+
 ## Native capabilities and verification status
 
 The following distinguishes public documentation from host availability and live

@@ -58,6 +58,16 @@ a new worker from the same self-contained handoff. Never recover IDs by searchin
 private agent storage or assume IDs survive resume. A worker returning a result
 alone does not prove it is either reusable or permanently closed.
 
+## Acceptance before implementation
+
+For complex tasks, complete the bounded independent draft-coverage review in
+`harness-plan` before registering a version-2 contract and dispatching product
+writers. Discovery and test planning on stable inputs can proceed meanwhile.
+Carry immutable cases and business-rule bases into every worker assignment.
+Final verifier returns `AC → TC → test/assertion → observed step` evidence; unresolved
+coverage/business rules remain blocked, never passed. Early review is not final
+approval and does not weaken the frozen-source final barrier.
+
 ## Dispatch ready branches without unnecessary waits
 
 Within the active milestone, record optional `work_items` in the existing task

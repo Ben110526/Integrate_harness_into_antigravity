@@ -63,6 +63,10 @@ class EvalManifestTests(unittest.TestCase):
                 ))
                 self.assertIsInstance(case.get("benchmark", False), bool)
                 self.assertIsInstance(case.get("inline_fast_path", False), bool)
+                self.assertIsInstance(case.get("require_result", False), bool)
+                if case["route"] == "COMPLEX_IMPLEMENT":
+                    self.assertTrue(case.get("require_result"))
+                self.assertIn(case.get("expected_report_status", "complete"), {"complete", "partial", "blocked"})
                 response_line_count = case.get("response_line_count")
                 if response_line_count is not None:
                     self.assertIsInstance(response_line_count, int)
@@ -103,6 +107,10 @@ class EvalManifestTests(unittest.TestCase):
                         for arg in criterion["verify"]
                     ))
                     self.assertIn(criterion["verify"][0], case["requires"])
+                    minimum = criterion.get("minimum_tests", 1)
+                    self.assertIsInstance(minimum, int)
+                    self.assertNotIsInstance(minimum, bool)
+                    self.assertGreater(minimum, 0)
 
                 fixture = FIXTURES / case["fixture"]
                 self.assertTrue(fixture.is_dir(), f"missing fixture: {fixture}")
@@ -173,6 +181,7 @@ class EvalManifestTests(unittest.TestCase):
                     set(case["required_changed_paths"]),
                 )
                 self.assertIn("COMPLEX_IMPLEMENT", case.get("response_contains", []))
+                self.assertEqual(case.get("expected_report_status"), "partial")
                 prompt = case["prompt"].lower()
                 self.assertIn("subagent", prompt)
                 self.assertIn("security", prompt)
@@ -218,17 +227,18 @@ class EvalManifestTests(unittest.TestCase):
     def test_workflow_metrics_do_not_hide_missing_ac_or_runner_assistance(self) -> None:
         case = next(case for case in self.cases if case["id"] == "long-workflow-intake")
         criteria = [{"id": f"AC-{index}", "status": "passed"} for index in (1, 2, 3)]
-        result = sample_result(case, "same-high-model", 0, 0, criteria, True, 1)
+        report = "HARNESS_RESULT: " + json.dumps({"status": "complete", "requirements": [{"id": item["id"], "status": "passed", "evidenceSteps": [1]} for item in criteria]})
+        result = sample_result(case, "same-high-model", 0, 0, criteria, True, 1, report)
         self.assertTrue(result["unassisted_completion"])
         self.assertIsNone(result["permission_prompts"])
         self.assertIsNone(result["native_resume_correct"])
-        assisted = sample_result(case, "same-high-model", 1, 0, criteria, True, 1)
+        assisted = sample_result(case, "same-high-model", 1, 0, criteria, True, 1, report)
         self.assertTrue(assisted["outcome_pass"])
         self.assertFalse(assisted["unassisted_completion"])
         for partial in (criteria[:1], criteria[:2], []):
-            self.assertFalse(sample_result(case, "high", 0, 0, partial, True, 1)["outcome_pass"])
+            self.assertFalse(sample_result(case, "high", 0, 0, partial, True, 1, report)["outcome_pass"])
         criteria[1]["status"] = "failed"
-        result = sample_result(case, "high", 0, 0, criteria, True, 1)
+        result = sample_result(case, "high", 0, 0, criteria, True, 1, report)
         self.assertFalse(result["outcome_pass"])
         self.assertEqual(result["ac_pass_count"], 2)
 
@@ -765,12 +775,39 @@ print(json.dumps({"status": "SUCCESS", "conversation_id": "fake", "response": re
             )
             self.assertEqual(accepted.returncode, 0, accepted.stderr)
 
+    def test_smoke_skips_uncounted_rust_before_model_call_and_reports_no_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = pathlib.Path(temp_dir)
+            fake_agy = temp / "agy"
+            fake_agy.write_text('#!/bin/sh\n: > "$FAKE_CALL_MARKER"\nexit 0\n', encoding="utf-8")
+            fake_agy.chmod(0o755)
+            marker = temp / "model-called"
+            environment = {**os.environ, "PATH": str(temp) + os.pathsep + os.environ["PATH"],
+                           "HARNESS_EVAL_CASE": "rust-regression", "FAKE_CALL_MARKER": str(marker)}
+            completed = subprocess.run(["bash", str(ROOT / "evals" / "run-smoke.sh")],
+                                       cwd=ROOT, env=environment, capture_output=True, text=True, timeout=30)
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("[skip] rust-regression", completed.stdout)
+            self.assertIn("unsupported counted verification runner", completed.stdout)
+            self.assertIn("no model call or coverage", completed.stdout)
+            self.assertIn("all 1 selected smoke eval(s) were skipped", completed.stderr)
+            self.assertFalse(marker.exists())
+
     def test_workflow_smoke_records_outcomes_and_explicit_quota_opt_in(self) -> None:
         solutions = {
             "parser.py": 'def parse_record(text):\n    item, quantity = text.split(",")\n    item = item.strip()\n    quantity = int(quantity)\n    if not item or quantity <= 0:\n        raise ValueError("invalid record")\n    return item, quantity\n',
             "store.py": 'from parser import parse_record\n\ndef import_batch(records, inventory):\n    parsed = [parse_record(record) for record in records]\n    for item, quantity in parsed:\n        inventory[item] = inventory.get(item, 0) + quantity\n    return sum(quantity for _, quantity in parsed)\n',
             "service.py": 'from store import import_batch\n\ndef intake_report(records, inventory):\n    units = import_batch(records, inventory)\n    return {"imported_units": units, "inventory": sorted(inventory.items())}\n',
         }
+        tampered_tests = (
+            'import os, unittest\nfrom pathlib import Path\n'
+            'Path(os.environ["FAKE_ORACLE_MARKER"]).write_text("executed")\n'
+            'class IntakeTests(unittest.TestCase):\n'
+            '    def test_ac1_validated_parser(self): pass\n'
+            '    def test_ac2_atomic_persistence(self): pass\n'
+            '    def test_ac3_integrated_report(self): pass\n'
+        )
+        compile(tampered_tests, "test_workflow.py", "exec")
         with tempfile.TemporaryDirectory() as temp_dir:
             temp = pathlib.Path(temp_dir)
             fake_home = temp / "home"
@@ -782,6 +819,7 @@ print(json.dumps({"status": "SUCCESS", "conversation_id": "fake", "response": re
             fake_agy.write_text(
                 "#!/usr/bin/env python3\nimport json, os, sys\nfrom pathlib import Path\n"
                 f"solutions = {solutions!r}\n"
+                'assert os.environ.get("PYTHONDONTWRITEBYTECODE") == "1", "smoke native turns must disable bytecode"\n'
                 'scenario = os.environ.get("FAKE_WORKFLOW", "pass")\n'
                 'marker = Path(os.environ["FAKE_CALL_MARKER"])\n'
                 'marker.write_bytes((marker.read_bytes() if marker.exists() else b"") + b"x")\n'
@@ -791,17 +829,28 @@ print(json.dumps({"status": "SUCCESS", "conversation_id": "fake", "response": re
                 '    response = "Milestone work is pending"\n'
                 'else:\n'
                 '    for name, source in solutions.items():\n'
-                '        if scenario != "missing-ac" or name != "service.py":\n'
+                '        if scenario not in {"missing-ac", "honest-partial"} or name != "service.py":\n'
                 '            Path(name).write_text(source, encoding="utf-8")\n'
                 '    if scenario == "dirty":\n'
                 '        Path("operator_notes.md").write_text("overwritten", encoding="utf-8")\n'
+                '    if scenario.startswith("tampered-tests"):\n'
+                f'        Path("test_workflow.py").write_text({tampered_tests!r}, encoding="utf-8")\n'
                 '    response = "AC-1 AC-2 AC-3\\nHarness: COMPLEX_IMPLEMENT; passed: all; failed/skipped: none"\n'
-                'print(json.dumps({"status": "CANCELLED" if scenario == "cancelled" else "SUCCESS", "conversation_id": "fake", "response": response}))\n',
+                '    rows = [{"id": "AC-" + str(i), "status": "passed", "evidenceSteps": [i]} for i in range(1, 4)]\n'
+                '    if scenario == "omitted-requirement": rows.pop()\n'
+                '    if scenario == "honest-partial": rows[-1] = {"id": "AC-3", "status": "unverified", "evidenceSteps": [], "reason": "service acceptance is not established"}\n'
+                '    report = {"status": "partial" if scenario == "honest-partial" else "complete", "requirements": rows}\n'
+                '    if scenario != "missing-report": response += "\\nHARNESS_RESULT: " + ("{" if scenario == "malformed-report" else json.dumps(report))\n'
+                'payload = {"status": "CANCELLED" if scenario == "cancelled" else "SUCCESS", "conversation_id": "fake", "response": response}\n'
+                'if scenario == "tampered-tests-no-conversation": payload.pop("conversation_id")\n'
+                'print(json.dumps(payload))\n'
+                'if scenario == "tampered-tests-error": sys.exit(3)\n',
                 encoding="utf-8",
             )
             fake_agy.chmod(0o755)
             marker = temp / "called"
             metrics = temp / "metrics.ndjson"
+            oracle_marker = temp / "oracle-executed"
             environment = {
                 **os.environ, "PATH": f"{temp}{os.pathsep}{os.environ['PATH']}",
                 "HOME": str(fake_home), "USERPROFILE": str(fake_home),
@@ -809,15 +858,17 @@ print(json.dumps({"status": "SUCCESS", "conversation_id": "fake", "response": re
                 "HARNESS_EVAL_METRICS_PATH": str(metrics),
                 "HARNESS_EVAL_MAX_CONTINUATIONS": "1",
                 "FAKE_CALL_MARKER": str(marker),
+                "FAKE_ORACLE_MARKER": str(oracle_marker),
             }
             environment.pop("HARNESS_EVAL_CONFIRM_QUOTA_USE", None)
+            environment.pop("PYTHONDONTWRITEBYTECODE", None)
             command = ["bash", str(ROOT / "evals" / "run-smoke.sh")]
             refused = subprocess.run(command, cwd=ROOT, env=environment, capture_output=True, text=True, timeout=30)
             self.assertNotEqual(refused.returncode, 0)
             self.assertIn("HARNESS_EVAL_CONFIRM_QUOTA_USE=1", refused.stderr)
             self.assertFalse(marker.exists())
             environment["HARNESS_EVAL_CONFIRM_QUOTA_USE"] = "1"
-            for scenario in ("pass", "missing-ac", "dirty", "assisted", "cancelled"):
+            for scenario in ("pass", "missing-ac", "dirty", "assisted", "cancelled", "missing-report", "malformed-report", "omitted-requirement", "honest-partial", "tampered-tests", "tampered-tests-error", "tampered-tests-no-conversation"):
                 with self.subTest(scenario=scenario):
                     environment["FAKE_WORKFLOW"] = scenario
                     before_calls = len(marker.read_bytes()) if marker.exists() else 0
@@ -833,9 +884,28 @@ print(json.dumps({"status": "SUCCESS", "conversation_id": "fake", "response": re
                     self.assertEqual(len(marker.read_bytes()) - before_calls, 2 if scenario == "assisted" else 1)
                     self.assertEqual(sample["preexisting_changes_preserved"], scenario != "dirty")
                     self.assertEqual(len(sample["acceptance"]), 3)
-                    if scenario == "missing-ac":
+                    if scenario.startswith("tampered-tests") or scenario == "dirty":
+                        self.assertEqual(sample["ac_pass_count"], 0)
+                        self.assertFalse(sample["all_required_ac_verified"])
+                        self.assertFalse(sample["oracle_integrity_verified"])
+                        self.assertTrue(all(item["status"] == "unverified" and item["executed"] is None for item in sample["acceptance"]))
+                        self.assertIn("integrity", sample["acceptance"][0]["reason"])
+                        self.assertFalse(oracle_marker.exists())
+                    if scenario in {"missing-ac", "honest-partial"}:
                         self.assertEqual(sample["ac_pass_count"], 2)
                         self.assertFalse(sample["all_required_ac_verified"])
+                    if scenario == "missing-ac":
+                        self.assertTrue(sample["false_complete"])
+                    if scenario == "honest-partial":
+                        self.assertTrue(sample["honest_partial"])
+                        self.assertTrue(sample["report_truthfulness"])
+                    if scenario in {"missing-report", "malformed-report"}:
+                        self.assertTrue(sample["task_fulfillment"])
+                        self.assertFalse(sample["report_valid"])
+                    if scenario == "omitted-requirement":
+                        self.assertTrue(sample["task_fulfillment"])
+                        self.assertFalse(sample["requirement_coverage"])
+                        self.assertTrue(sample["false_complete"])
 
     def test_changed_path_contract_rejects_test_or_manifest_edits(self) -> None:
         required = {"src/policy.mjs", "src/store.mjs"}

@@ -164,9 +164,22 @@
     },
     "source_fingerprint": {
       "type": "object",
+      "propertyNames": {
+        "$ref": "#/$defs/pathScopes/items"
+      },
       "additionalProperties": {
         "type": "string",
         "pattern": "^[a-f0-9]{64}$"
+      }
+    },
+    "source_fingerprint_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "scope", "max_files"],
+      "properties": {
+        "version": {"type": "integer", "const": 2},
+        "scope": {"type": "string", "enum": ["explicit", "auto"]},
+        "max_files": {"type": "integer", "minimum": 1, "maximum": 10000}
       }
     },
     "evidence": {

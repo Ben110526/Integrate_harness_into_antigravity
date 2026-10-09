@@ -72,9 +72,10 @@ native result contract and empty/failing/successful regression tests.
 
 ## Checkpoints are not source changes
 
-The current workflow uses genuine native artifacts outside the workspace, not a
-custom task-state engine. Such artifact writes leave source evidence and retry
-state untouched. Ordinary workspace files, including `.harness/**` JSON or
+The workflow prefers genuine native artifacts outside the workspace and also
+provides a task-state persistence engine. Native artifact writes leave source
+evidence and retry state untouched. Only exact managed `.harness/tasks/<safe-task-id>/state.json` writes are classified
+as task metadata. Other workspace files, including other `.harness/**` JSON and
 scripts, still create debt even if a caller sets `IsArtifact=True`. No blanket
 metadata exemption exists. See [the milestone and resume contract](long-running-workflow.md).
 

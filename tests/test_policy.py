@@ -19,6 +19,7 @@ BASELINE_BYTES = 9358
 # Completion registration/reporting adds an always-on contract to the compressed policy.
 COMPLETION_PROTOCOL_BUDGET_BYTES = 2600
 PARALLEL_CAPABILITY_BUDGET_BYTES = 1800
+ACCEPTANCE_CASE_BUDGET_BYTES = 800
 
 
 class PolicyTests(unittest.TestCase):
@@ -31,7 +32,7 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(self.global_bytes, self.plugin_bytes)
         size = len(self.global_bytes)
         self.assertGreaterEqual(size, BASELINE_BYTES * 0.70)
-        self.assertLessEqual(size, BASELINE_BYTES * 0.82 + COMPLETION_PROTOCOL_BUDGET_BYTES + PARALLEL_CAPABILITY_BUDGET_BYTES)
+        self.assertLessEqual(size, BASELINE_BYTES * 0.82 + COMPLETION_PROTOCOL_BUDGET_BYTES + PARALLEL_CAPABILITY_BUDGET_BYTES + ACCEPTANCE_CASE_BUDGET_BYTES)
 
     def test_parallel_dispatch_and_automatic_capabilities_are_always_on(self) -> None:
         for required in (
@@ -44,6 +45,15 @@ class PolicyTests(unittest.TestCase):
         complex_route = next(line for line in self.policy.splitlines() if line.startswith('- `COMPLEX_IMPLEMENT`:'))
         for role in ('harness-researcher', 'harness-implementer', 'harness-reviewer', 'harness-verifier'):
             self.assertIn(f'`{role}`', complex_route)
+
+    def test_complex_preflight_and_case_evidence_contract(self) -> None:
+        for term in ("independent draft acceptance review", "before registration/product edits",
+                     "contract version 2", "coverageReview", "caseEvidence", "unresolved ACs cannot pass",
+                     "cannot authenticate the reviewer"):
+            self.assertIn(term, self.policy)
+        plan = (SKILL_DIRECTORY / "harness-plan" / "SKILL.md").read_text()
+        for term in ("TC-*", "business-rule", "before locking", "Tiny/clear localized work"):
+            self.assertIn(term, plan)
 
     def test_completion_and_business_rule_contracts_are_always_on(self) -> None:
         for required in (

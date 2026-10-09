@@ -41,6 +41,8 @@ FINAL_CHECK_ROLES = {"reviewer", "verifier", "harness-reviewer", "harness-verifi
 MAX_WORK_ITEMS = 128
 DEFAULT_MAX_WORKERS = 3
 MAX_WORKERS = 8
+FINGERPRINT_VERSION = 2
+MAX_FINGERPRINT_FILES = 10000
 
 IGNORED_FINGERPRINT_DIRS = {
     ".git",
@@ -221,6 +223,7 @@ def validate_task_state(data: Any) -> Tuple[bool, List[str]]:
         "milestones",
         "acceptance_criteria",
         "source_fingerprint",
+        "source_fingerprint_metadata",
         "evidence",
         "blockers",
         "next_action",
@@ -333,10 +336,25 @@ def validate_task_state(data: Any) -> Tuple[bool, List[str]]:
         errors.append("source_fingerprint must be an object mapping paths to SHA-256 strings")
     else:
         for path_key, digest in sf.items():
-            if not isinstance(path_key, str) or not path_key:
-                errors.append(f"source_fingerprint path {path_key!r} must be a non-empty string")
+            if not _is_normalized_scope(path_key):
+                errors.append(f"source_fingerprint path {path_key!r} must be a normalized workspace-relative path")
             if not isinstance(digest, str) or not HEX_SHA256_REGEX.fullmatch(digest):
                 errors.append(f"source_fingerprint[{path_key!r}] hash {digest!r} must be 64-char hex SHA-256")
+
+    metadata = data.get("source_fingerprint_metadata")
+    if "source_fingerprint_metadata" in data:
+        if not isinstance(metadata, dict):
+            errors.append("source_fingerprint_metadata must be an object")
+        else:
+            if set(metadata) != {"version", "scope", "max_files"}:
+                errors.append("source_fingerprint_metadata requires only version, scope, max_files")
+            if type(metadata.get("version")) is not int or metadata["version"] != FINGERPRINT_VERSION:
+                errors.append(f"source_fingerprint_metadata.version must be {FINGERPRINT_VERSION}")
+            if metadata.get("scope") not in ("explicit", "auto"):
+                errors.append("source_fingerprint_metadata.scope must be explicit or auto")
+            limit = metadata.get("max_files")
+            if type(limit) is not int or not 1 <= limit <= MAX_FINGERPRINT_FILES:
+                errors.append(f"source_fingerprint_metadata.max_files must be between 1 and {MAX_FINGERPRINT_FILES}")
 
     # evidence (optional)
     if "evidence" in data:
@@ -513,9 +531,10 @@ def plan_ready_work(state: Dict[str, Any], available_slots: Optional[int] = None
 
 
 def compute_file_sha256(path: Path) -> Optional[str]:
-    """Compute deterministic SHA-256 of a regular file.
+    """Compute a legacy content-only digest, following the supplied path.
 
-    Returns None if missing, unreadable, directory, or symlink escaping root.
+    Returns None if missing, unreadable or non-regular. This helper does not
+    establish workspace provenance; snapshots use the checked manifest instead.
     """
     try:
         if not path.is_file():
@@ -534,52 +553,123 @@ def compute_source_fingerprint(
     paths: Optional[Sequence[str]] = None,
     max_files: int = 150,
 ) -> Dict[str, str]:
-    """Generate a deterministic dictionary of relative path -> SHA-256 for scoped source files.
+    """Return path -> v2 manifest SHA-256, retaining the dictionary interface.
 
-    If paths is provided, only inspects those paths.
-    Otherwise, inspects relevant source/test/config files in workspace up to max_files.
+    Explicit paths include missing and non-file entries. Digests cover kind,
+    permission mode, resolved path, link text and regular-file content. Directory
+    entries describe that exact path, not recursive directory contents. Automatic
+    scope uses the existing source-extension/ignored-directory policy and raises
+    rather than silently returning a truncated, unreadable or unsafe snapshot.
+    Persist through capture_source_snapshot to identify v2 coverage; untagged
+    legacy dictionaries remain loadable but cannot preserve verified evidence.
     """
-    ws_resolved = workspace.resolve(strict=False)
-    fingerprint: Dict[str, str] = {}
+    if type(max_files) is not int or not 1 <= max_files <= MAX_FINGERPRINT_FILES:
+        raise ValueError(f"max_files must be an integer between 1 and {MAX_FINGERPRINT_FILES}")
+    try:
+        root = workspace.resolve(strict=True)
+        if not root.is_dir():
+            raise ValueError("Fingerprint workspace must be a directory")
+        if paths is not None:
+            if isinstance(paths, (str, bytes)):
+                raise ValueError("Fingerprint paths must be a sequence of path strings")
+            requested = list(paths)
+            if not all(_is_normalized_scope(path) for path in requested):
+                raise ValueError("Fingerprint paths must be normalized workspace-relative literals")
+            selected = sorted(set(requested))
+            if len(selected) > max_files:
+                raise ValueError("Explicit fingerprint scope exceeds max_files")
+        else:
+            selected: List[str] = []
 
-    if paths is not None:
-        for rel in sorted(paths):
-            p = (ws_resolved / rel).resolve(strict=False)
-            try:
-                p.relative_to(ws_resolved)
-            except ValueError:
-                continue
-            digest = compute_file_sha256(p)
-            if digest is not None:
-                # Store normalized posix relative path
-                fingerprint[Path(rel).as_posix()] = digest
-        return fingerprint
+            def scan_error(error: OSError) -> None:
+                raise ValueError(f"Cannot enumerate fingerprint scope: {error}") from error
 
-    # Auto-scan workspace for relevant code/config files
-    candidate_paths: List[Path] = []
-    for root_dir, dirnames, filenames in os.walk(ws_resolved):
-        dirnames[:] = [d for d in dirnames if d not in IGNORED_FINGERPRINT_DIRS and not d.startswith(".")]
-        for fname in filenames:
-            if fname.startswith("."):
-                continue
-            ext = os.path.splitext(fname)[1].casefold()
-            if ext in {".py", ".ts", ".js", ".mjs", ".go", ".rs", ".json", ".md", ".sh", ".toml", ".yml", ".yaml"}:
-                candidate_paths.append(Path(root_dir) / fname)
-                if len(candidate_paths) >= max_files:
-                    break
-        if len(candidate_paths) >= max_files:
-            break
+            extensions = {".py", ".ts", ".js", ".mjs", ".go", ".rs", ".json", ".md", ".sh", ".toml", ".yml", ".yaml"}
+            for root_dir, dirnames, filenames in os.walk(root, onerror=scan_error, followlinks=False):
+                dirnames[:] = sorted(name for name in dirnames if name not in IGNORED_FINGERPRINT_DIRS and not name.startswith("."))
+                for name in dirnames:
+                    if stat.S_ISLNK((Path(root_dir) / name).lstat().st_mode):
+                        raise ValueError("Auto fingerprint cannot cover a directory symlink; use explicit file scope")
+                for name in sorted(filenames):
+                    if not name.startswith(".") and Path(name).suffix.casefold() in extensions:
+                        selected.append((Path(root_dir) / name).relative_to(root).as_posix())
+                        if len(selected) > max_files:
+                            raise ValueError("Auto fingerprint scope exceeds max_files; use a complete explicit scope or larger bound")
+        return {relative: _source_entry_digest(root, relative) for relative in selected}
+    except (OSError, RuntimeError) as error:
+        raise ValueError(f"Cannot establish source fingerprint: {error}") from error
 
-    for p in sorted(candidate_paths):
+
+def _stat_identity(info: os.stat_result) -> Tuple[int, ...]:
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _source_entry_digest(root: Path, relative: str) -> str:
+    """Hash one safe entry; reject observed changes during inspection."""
+    lexical = root / relative
+    resolved = lexical.resolve(strict=False)
+    try:
+        resolved_relative = resolved.relative_to(root).as_posix()
+    except ValueError as error:
+        raise ValueError(f"Fingerprint path escapes workspace: {relative}") from error
+    entry: Dict[str, Any] = {"resolved_path": resolved_relative}
+    try:
+        before = lexical.lstat()
+    except FileNotFoundError:
+        entry["kind"] = "missing"
+    else:
+        entry["mode"] = stat.S_IMODE(before.st_mode)
+        is_link = stat.S_ISLNK(before.st_mode)
+        if is_link:
+            entry["kind"] = "symlink"
+            entry["link_target"] = os.readlink(lexical)
         try:
-            rel = p.relative_to(ws_resolved).as_posix()
-        except ValueError:
-            continue
-        digest = compute_file_sha256(p)
-        if digest is not None:
-            fingerprint[rel] = digest
+            target_info = resolved.lstat()
+        except FileNotFoundError:
+            if not is_link:
+                raise ValueError(f"Source changed during fingerprint: {relative}")
+            target: Dict[str, Any] = {"kind": "missing"}
+        else:
+            target = {"mode": stat.S_IMODE(target_info.st_mode)}
+            if stat.S_ISREG(target_info.st_mode):
+                target["kind"] = "file"
+                digest = hashlib.sha256()
+                descriptor = os.open(resolved, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0))
+                with os.fdopen(descriptor, "rb") as handle:
+                    if _stat_identity(os.fstat(handle.fileno())) != _stat_identity(target_info):
+                        raise ValueError(f"Source changed before fingerprint read: {relative}")
+                    while chunk := handle.read(64 * 1024):
+                        digest.update(chunk)
+                    if _stat_identity(os.fstat(handle.fileno())) != _stat_identity(target_info):
+                        raise ValueError(f"Source changed during fingerprint read: {relative}")
+                target["content_sha256"] = digest.hexdigest()
+            elif stat.S_ISDIR(target_info.st_mode):
+                target["kind"] = "directory"
+            elif stat.S_ISLNK(target_info.st_mode):
+                raise ValueError(f"Source changed during symlink resolution: {relative}")
+            else:
+                target.update(kind="other", file_type=stat.S_IFMT(target_info.st_mode))
+            if _stat_identity(resolved.lstat()) != _stat_identity(target_info):
+                raise ValueError(f"Source changed during fingerprint: {relative}")
+        if is_link:
+            entry["target"] = target
+        else:
+            entry.update(target)
+        if _stat_identity(lexical.lstat()) != _stat_identity(before) or lexical.resolve(strict=False) != resolved:
+            raise ValueError(f"Source changed during fingerprint: {relative}")
+    return hashlib.sha256(json.dumps(entry, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
-    return fingerprint
+
+def capture_source_snapshot(workspace: Path, paths: Optional[Sequence[str]] = None, max_files: int = 150) -> Dict[str, Any]:
+    """Capture both v2 fingerprint fields for a new, scoped checkpoint baseline.
+
+    A new baseline does not authenticate prior checks or upgrade legacy evidence.
+    Callers must establish that their declared scope covers the relevant inputs.
+    """
+    return {
+        "source_fingerprint": compute_source_fingerprint(workspace, paths, max_files),
+        "source_fingerprint_metadata": {"version": FINGERPRINT_VERSION, "scope": "auto" if paths is None else "explicit", "max_files": max_files},
+    }
 
 
 @contextmanager
@@ -765,23 +855,23 @@ def assess_task_resumption(
 
     if status in {"completed", "cancelled"}:
         reasons.append(f"Task is already {status}")
-        return {
-            "can_resume": False,
-            "task_id": task_id,
-            "status": status,
-            "active_milestone": active_milestone,
-            "reasons": reasons,
-            "changed_files": [],
-            "stale_ac_ids": [],
-            "valid_ac_ids": [ac["id"] for ac in state.get("acceptance_criteria", []) if ac.get("status") == "verified"],
-        }
 
     # Check workspace provenance
+    metadata = state.get("source_fingerprint_metadata")
+    provenance_matches = False
+    legacy_reconstruction = False
     stored_ws = state.get("workspace")
-    if stored_ws:
-        stored_ws_resolved = Path(stored_ws).resolve(strict=False)
-        if stored_ws_resolved != ws_resolved:
-            reasons.append(f"Workspace provenance mismatch: expected {stored_ws}, current {ws_resolved}")
+    if not isinstance(stored_ws, str) or not stored_ws or not Path(stored_ws).is_absolute():
+        legacy_reconstruction = metadata is None
+        reasons.append("Workspace provenance is missing or not absolute; verified evidence cannot be reused")
+    else:
+        try:
+            stored_ws_resolved = Path(stored_ws).resolve(strict=True)
+            provenance_matches = stored_ws_resolved == ws_resolved and stored_ws_resolved.is_dir()
+            if not provenance_matches:
+                reasons.append(f"Workspace provenance mismatch: expected {stored_ws}, current {ws_resolved}")
+        except (OSError, ValueError, RuntimeError) as error:
+            reasons.append(f"Workspace provenance could not be established: {error}")
 
     # Check brief revision
     brief_changed = False
@@ -796,15 +886,32 @@ def assess_task_resumption(
     changed_files: List[str] = []
     missing_files: List[str] = []
 
-    for rel_path, expected_hash in stored_fingerprint.items():
-        curr_file = ws_resolved / rel_path
-        if not curr_file.exists():
-            missing_files.append(rel_path)
-            changed_files.append(rel_path)
-        else:
-            actual_hash = compute_file_sha256(curr_file)
-            if actual_hash != expected_hash:
-                changed_files.append(rel_path)
+    coverage_verified = False
+    if metadata is None:
+        reasons.append("Legacy source fingerprint has no v2 coverage metadata; re-establish scope and checks")
+    elif not provenance_matches:
+        reasons.append("Source fingerprint cannot be reused for a different or unverified workspace")
+    else:
+        try:
+            valid, errors = validate_task_state(state)
+            if not valid:
+                raise ValueError("Invalid checkpoint fingerprint: " + "; ".join(errors))
+            current = compute_source_fingerprint(
+                ws_resolved,
+                paths=list(stored_fingerprint) if metadata["scope"] == "explicit" else None,
+                max_files=metadata["max_files"],
+            )
+            coverage_verified = True
+            changed_files = [relative for relative in sorted(set(stored_fingerprint) | set(current))
+                             if stored_fingerprint.get(relative) != current.get(relative)]
+            for relative in stored_fingerprint:
+                try:
+                    (ws_resolved / relative).lstat()
+                except FileNotFoundError:
+                    missing_files.append(relative)
+        except (ValueError, OSError, RuntimeError) as error:
+            coverage_verified = False
+            reasons.append(f"Source fingerprint coverage could not be established: {error}")
 
     if changed_files:
         reasons.append(f"Source files changed since checkpoint ({len(changed_files)} files modified/missing)")
@@ -818,7 +925,7 @@ def assess_task_resumption(
         ac_id = ac.get("id", "")
         ac_status = ac.get("status")
         if ac_status == "verified":
-            if brief_changed or changed_files:
+            if brief_changed or changed_files or not coverage_verified:
                 stale_ac_ids.append(ac_id)
             else:
                 valid_ac_ids.append(ac_id)
@@ -827,14 +934,15 @@ def assess_task_resumption(
         elif ac_status == "superseded":
             pass
 
-    can_resume = status in {"pending", "in_progress", "blocked"}
+    can_resume = status in {"pending", "in_progress", "blocked"} and (provenance_matches or legacy_reconstruction)
 
     return {
         "can_resume": can_resume,
         "task_id": task_id,
         "status": status,
         "active_milestone": active_milestone,
-        "source_clean": len(changed_files) == 0,
+        "source_clean": coverage_verified and len(changed_files) == 0,
+        "fingerprint_coverage_verified": coverage_verified,
         "changed_files": sorted(changed_files),
         "missing_files": sorted(missing_files),
         "stale_ac_ids": sorted(stale_ac_ids),
@@ -860,6 +968,10 @@ def main() -> None:
     init_parser.add_argument("--acs", default="AC-1", help="Comma-separated AC IDs (e.g. AC-1,AC-2)")
     init_parser.add_argument("--brief-revision", default="rev-1", help="Brief revision string")
     init_parser.add_argument("--workspace", default=".", help="Target workspace path")
+    init_parser.add_argument("--scope-path", action="append", default=None,
+                             help="Exact workspace-relative source input; repeat for a complete explicit scope (missing paths are retained)")
+    init_parser.add_argument("--max-files", type=int, default=150,
+                             help=f"Fingerprint file-count bound, 1..{MAX_FINGERPRINT_FILES} (default: 150)")
 
     # list
     list_parser = subparsers.add_parser("list", help="List active tasks in workspace")
@@ -917,13 +1029,15 @@ def main() -> None:
             "active_milestone": ms_ids[0] if ms_ids else "M1",
             "milestones": milestones,
             "acceptance_criteria": acs,
-            "source_fingerprint": compute_source_fingerprint(ws),
         }
         try:
+            new_state.update(capture_source_snapshot(ws, paths=args.scope_path, max_files=args.max_files))
             saved = save_task_state(ws, new_state)
             print(f"Initialized task {args.task_id} state at {saved}")
         except Exception as err:
             print(f"Failed to initialize task state: {err}", file=sys.stderr)
+            if "fingerprint" in str(err).casefold() or "max_files" in str(err):
+                print(f"Use repeated --scope-path for all relevant exact inputs, or --max-files N (1..{MAX_FINGERPRINT_FILES}) for a complete bounded scan.", file=sys.stderr)
             sys.exit(1)
 
     elif args.command == "list":

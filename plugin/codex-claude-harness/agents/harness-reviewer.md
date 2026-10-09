@@ -13,6 +13,13 @@ commandExecutionPolicy: sandbox
 
 # Mission
 
+For a bounded preflight assignment, compare the draft acceptance contract and
+original request before implementation. Identify omitted conditions/constraints,
+diluted outcomes, unsupported business-rule sources and unresolved decisions.
+Return the complete reviewed AC inventory, unresolved AC IDs and concrete draft
+corrections to main. Do not edit or register the contract. Preflight is not final
+approval; final review/verification still evaluates the frozen implementation.
+
 Review the exact diff or scope assigned by the parent. Stay read-only.
 
 - Read repository instructions and relevant surrounding code/tests.

@@ -30,6 +30,75 @@ Before applying a business rule, find its source in the user's instructions or r
 
 The inline fast path remains exempt only when all existing eligibility conditions hold and the response declares `mode: inline-fast-path`. Routing and semantic eligibility remain policy controls; a marker cannot prove that the edit qualified.
 
+## Complex tasks: reviewed contract version 2
+
+Complex implementation uses a bounded independent acceptance review **before**
+registration and product edits. Main sends the full request, draft ACs, Behavior
+Map and inspected business-rule sources to `harness-reviewer`. The reviewer
+identifies omissions, diluted acceptance, unsupported rules and missing decisions;
+main corrects the draft before making it immutable. Discovery/test planning on
+stable inputs can overlap this review. Unresolved material rules pause dependent
+work, while unrelated authorized work may proceed. This early review cannot
+approve the final implementation.
+
+Version 1 remains supported for existing clients and clear localized tasks.
+Version 2 retains its requirement fields and adds cases and a review record:
+
+```json
+{
+  "version": 2,
+  "coverageReview": {
+    "reviewer": "harness-reviewer",
+    "reviewedIds": ["AC-1"],
+    "unresolvedIds": []
+  },
+  "requirements": [{
+    "id": "AC-1",
+    "request": "validate the email",
+    "acceptance": "Invalid email is rejected visibly without creating a signup.",
+    "verification": "behavioral",
+    "cases": [{
+      "id": "TC-1", "kind": "failure",
+      "scenario": "Submit an invalid email",
+      "expected": "Validation error is shown; no signup is persisted",
+      "basis": "User request: validate the email"
+    }]
+  }]
+}
+```
+
+Every AC has 1–16 cases with globally unique `TC-*` IDs, specific inputs/actions,
+expected observable outcomes and their source basis. Behavioral kinds are
+`normal`, `boundary` and `failure`; static ACs use `static`. Select applicable cases
+from the requested behavior and discovered contracts; do not invent business
+rules, unnecessary cases or extra product scope. Include normal/error/boundary
+probes when material, and explain an unavailable check rather than lowering the
+expected outcome. Main reviews path/symbol references and conflicts in each basis.
+
+`reviewedIds` includes every registered AC; `unresolvedIds` is a subset that cannot
+pass. Cases and the review record are immutable within the user turn. A new user
+clarification permits a new contract; editing the old review to remove a blocker
+does not. Review identity and semantic coverage remain independently inspected
+workflow obligations: a model-written record does not authenticate a reviewer.
+
+The final verifier maps each case to actual test IDs, assertions/observed outcomes
+and current tool steps. Build bounded independent challenge probes in an assigned
+scratch directory when existing tests do not exercise required behavior; preserve
+product tests and implementation ownership. A single suite may cover many ACs
+when its real assertions prove all of them. Main includes this mapping on every
+passed version-2 row:
+
+```text
+HARNESS_RESULT: {"status":"complete","requirements":[{"id":"AC-1","status":"passed","evidenceSteps":[21],"caseEvidence":[{"caseId":"TC-1","step":21,"test":"test_invalid_email_not_saved","assertion":"Validation error shown and signup count unchanged"}]}]}
+```
+
+The hook checks case coverage, unique known IDs, nonempty test/assertion fields,
+resolved AC status and that case steps belong to the AC's observed fresh successful
+checks. Failed/blocked/unverified rows need reasons but no fabricated mapping.
+The hook still cannot read an assertion's meaning, prove test relevance or that the
+independent review truly happened. One green test with invented case descriptions
+is not meaningful acceptance; verifier inspection and outcome evals remain required.
+
 ## Record verification honestly
 
 Run relevant checks after registration and the final workspace write. For every criterion, identify the command that actually exercises its acceptance. Behavioral criteria require a behavioral check; lint, types and a build alone do not establish behavior.

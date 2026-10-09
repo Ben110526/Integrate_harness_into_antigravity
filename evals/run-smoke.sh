@@ -17,7 +17,7 @@ record_case() {
   if ! python3 "${repo_root}/evals/smoke_results.py" record \
     "${cases_path}" "${case_index}" "${case_dir}" "${model}" \
     "${continuations}" "$((failures - case_failures_before))" \
-    "${started}" "${metrics_path}"; then
+    "${started}" "${metrics_path}" "${response_path}" "${product_failures}"; then
     failures=$((failures + 1))
   fi
 }
@@ -121,6 +121,12 @@ PY
   case_dir="${eval_root}/${case_id}"
   response_path="${eval_root}/${case_id}.json"
 
+  if ! python3 "${repo_root}/evals/oracles.py" supports-case "${cases_path}" "${case_index}"; then
+    printf '[skip] %s: unsupported counted verification runner; no model call or coverage\n' "${case_id}"
+    skipped=$((skipped + 1))
+    continue
+  fi
+
   missing_requirements=()
   while IFS= read -r requirement; do
     if [[ -n "${requirement}" ]] && ! command -v "${requirement}" >/dev/null 2>&1; then
@@ -145,12 +151,13 @@ PY
   python3 "${repo_root}/evals/smoke_results.py" prepare "${cases_path}" "${case_index}" "${case_dir}"
   continuations=0
   case_failures_before="${failures}"
+  product_failures=0
   started="$(python3 -c 'import time; print(time.time())')"
 
   printf '[eval] %s (%s)\n' "${case_id}" "${model}"
   if ! (
     cd "${case_dir}"
-    agy -p "${prompt}" --model "${model}" \
+    PYTHONDONTWRITEBYTECODE=1 agy -p "${prompt}" --model "${model}" \
       --new-project --add-dir "${case_dir}" --sandbox --mode=accept-edits \
       --output-format json --print-timeout 15m
   ) > "${response_path}"; then
@@ -186,7 +193,7 @@ PY
     continuations=$((continuations + 1))
     if ! (
       cd "${case_dir}"
-      agy -p 'Continue the pending work, collect all required subagent results, and finish the response with a Harness status line.' \
+      PYTHONDONTWRITEBYTECODE=1 agy -p 'Continue the pending work, collect all required subagent results, and finish the response with a Harness status line.' \
         --conversation "${conversation_id}" --model "${model}" \
         --add-dir "${case_dir}" --sandbox --mode=accept-edits \
         --output-format json --print-timeout 15m
@@ -273,12 +280,14 @@ PY
     printf '[fail] %s: expected change=%s, got %s\n' "${case_id}" "${expect_change}" "${changed}" >&2
     print_response_diagnostic "${response_path}"
     failures=$((failures + 1))
+    product_failures=$((product_failures + 1))
   fi
 
   if [[ -n "${max_diff_hunks}" || -n "${max_changed_lines}" ]]; then
     if [[ -z "${max_diff_hunks}" || -z "${max_changed_lines}" ]]; then
       printf '[fail] %s: incomplete diff-shape contract\n' "${case_id}" >&2
       failures=$((failures + 1))
+      product_failures=$((product_failures + 1))
       record_case
       continue
     fi
@@ -295,20 +304,24 @@ PY
   then
     printf '[fail] %s: changed-path contract failed\n' "${case_id}" >&2
     failures=$((failures + 1))
+    product_failures=$((product_failures + 1))
+  fi
+
+  if ! python3 "${repo_root}/evals/smoke_results.py" integrity "${cases_path}" "${case_index}" "${case_dir}"; then
+    printf '[fail] %s: fixture integrity failed; workspace oracles were not executed\n' "${case_id}" >&2
+    failures=$((failures + 1))
+    product_failures=$((product_failures + 1))
+    record_case
+    continue
   fi
 
   if [[ "${verify_json}" != '[]' ]]; then
-    if ! python3 - "${case_dir}" "${verify_json}" <<'PY'
-import json
-import subprocess
-import sys
-
-subprocess.run(json.loads(sys.argv[2]), cwd=sys.argv[1], check=True)
-PY
+    if ! python3 "${repo_root}/evals/oracles.py" "${case_dir}" "${verify_json}"
     then
       printf '[fail] %s: deterministic verification failed\n' "${case_id}" >&2
       print_response_diagnostic "${response_path}"
       failures=$((failures + 1))
+      product_failures=$((product_failures + 1))
     fi
   fi
 
@@ -321,7 +334,7 @@ if ((selected == 0)); then
 fi
 
 if ((executed == 0)); then
-  printf '[fail] all %d selected smoke eval(s) were skipped for missing runtimes\n' "${selected}" >&2
+  printf '[fail] all %d selected smoke eval(s) were skipped for missing runtimes or unsupported counted runners\n' "${selected}" >&2
   exit 1
 fi
 

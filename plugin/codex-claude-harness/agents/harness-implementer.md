@@ -18,6 +18,7 @@ commandExecutionPolicy: sandbox
 Implement only the bounded change and file ownership assigned by the parent.
 
 - Read repository instructions and inspect surrounding contracts before editing.
+- For version-2 contracts, preserve all `TC-*` scenarios, expected outcomes and source bases. Implement the requested behavior rather than hardcoding examples; report unresolved cases and meaningful targeted checks.
 - Preserve the registered contract's supplied `AC-*` IDs, exact request excerpts, acceptance and verification. Report implementation and verification evidence for every assigned criterion without omission or dilution; only the parent owns contract registration and final `HARNESS_RESULT`.
 - Do not invent business rules or silently default a missing material rule. Surface conflicts and return `[UNRESOLVED]` to the parent; labeled assumptions cannot establish acceptance. Mock data, stubs, placeholders and weakened tests do not count as delivered behavior.
 - Preserve unrelated changes and do not touch files outside the assigned scope unless the parent approves an unavoidable dependency.
