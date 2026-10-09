@@ -25,6 +25,15 @@ class HarnessRunContractTests(unittest.TestCase):
         self.implement_text = HARNESS_IMPLEMENT.read_text(encoding="utf-8")
         self.ship_text = HARNESS_SHIP.read_text(encoding="utf-8")
 
+    def test_ready_parallel_dispatch_preserves_final_verification_barrier(self) -> None:
+        for term in (
+            "Launch all ready independent branches before waiting", "max_workers: 3",
+            "Refill", "critical path", "read_paths", "write_paths", "dispatch-plan",
+            "coordinator is the only", "preparation cannot approve code still being written",
+            "evaluated source is frozen", "planner's ready list",
+        ):
+            self.assertIn(term, self.run_text)
+
     def test_frontmatter_metadata(self) -> None:
         """harness-run skill frontmatter must declare valid name and description."""
         self.assertTrue(self.run_text.startswith("---\n"))

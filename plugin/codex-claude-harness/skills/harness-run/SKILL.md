@@ -58,6 +58,45 @@ a new worker from the same self-contained handoff. Never recover IDs by searchin
 private agent storage or assume IDs survive resume. A worker returning a result
 alone does not prove it is either reusable or permanently closed.
 
+## Dispatch ready branches without unnecessary waits
+
+Within the active milestone, record optional `work_items` in the existing task
+state: stable item ID, milestone ID, native role, dependencies, status, explicit
+`read_paths` and `write_paths`, and optional priority. The coordinator is the only
+state writer. Use `max_workers: 3` by default and reduce it to the observed runtime
+capacity; a user-requested larger limit still cannot exceed available slots.
+
+Run the bundled read-only `scripts/task_state.py dispatch-plan` for the current
+task. It validates the dependency graph, path ownership, capacity and final-check
+barrier, then proposes ready item IDs. It does not start agents, wait, grant
+permissions, authenticate results, or reserve files. The coordinator must inspect
+actual source, confirm current ownership, invoke each selected native role, and
+mark only successfully dispatched workers as running before replanning. Treat a
+runtime refusal as an undispatched item; do not pretend it started.
+
+Launch all ready independent branches before waiting for any one result. Refill
+free slots as individual workers return; do not wait for the whole wave. Prioritize
+work that unlocks the critical path. Discovery, specialist analysis and test
+planning may overlap when their inputs are ready. Parallel implementation requires
+settled interfaces and disjoint file ownership. Read/read sharing is allowed;
+read/write and write/write overlap must wait, including directory/file aliases.
+Prefer exact file scopes for independent implementation. Existing directory scopes
+conservatively serialize against write-related access because nested aliases are
+not recursively scanned; read-only workers may still share directories. Narrow a
+broad scope after discovery to recover safe parallelism. Shared lockfiles, generated
+outputs and browser/Serena sessions need one owner.
+
+Keep final reviewer and verifier read-only and independent. They may prepare early
+on stable input, but preparation cannot approve code still being written. Final
+review and behavioral verification wait until implementation writers have completed
+and the evaluated source is frozen; they then run together. A relevant write makes
+that scope's old evidence stale. Any unexpected shared-file dependency pauses the
+affected worker for a bounded replan rather than racing an edit.
+
+Only dispatched native workers execute concurrently. The planner's ready list and
+unit tests do not prove live Antigravity scheduling or a measured speedup. Keep tiny
+and plan-only tasks on their existing paths.
+
 ## Execute, check, dispatch
 
 For each active milestone:

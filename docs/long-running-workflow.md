@@ -38,6 +38,45 @@ passes its relevant checks, the coordinator emits non-final progress and dispatc
 the next ready work in the active turn. It must not call the whole task complete
 while a required AC remains unverified, even if some other suite passed.
 
+## Ready parallel dispatch
+
+Large tasks use dependency-aware parallel work inside one active milestone. The
+coordinator launches every ready independent branch before waiting, with three
+workers by default and a lower limit when the runtime has fewer slots. When one
+worker finishes, the coordinator fills the freed slot rather than waiting for the
+whole wave. Prerequisites on the critical path take priority.
+
+Optional `work_items` and `max_workers` extend version-1 task state without changing
+legacy checkpoints. Each item identifies its milestone, native role, dependencies,
+status and explicit `read_paths`/`write_paths`. The read-only `dispatch-plan` command
+returns runnable IDs and waiting reasons. It checks dependencies, cycles, available
+slots, scope overlap and final-review barriers. Directory/file overlap and aliases
+must be considered; read/read sharing is allowed, a writer has exclusive ownership
+of its scope. Use exact file scopes for parallel implementation. An existing
+directory scope conservatively serializes write-related comparisons because the
+planner does not scan its nested symlinks/hardlinks; narrow it after discovery.
+Conflicting already-running ownership makes planning fail rather than dispatching
+more workers. Shared browser/Serena sessions and generated outputs need one owner.
+
+The planner does not dispatch agents, reserve files or supply a scheduler. The
+coordinator checks actual ownership, invokes native agents, records observed
+running/completed states, and replans when a result arrives or an interface changes.
+Only the coordinator writes the task state. A proposed ready list is not evidence
+that native workers ran concurrently or that elapsed time improved.
+
+Research, specialist analysis and test discovery can overlap on stable inputs.
+Implementation branches run together once their shared interfaces are settled and
+write ownership is disjoint. Reviewer/verifier preparation can begin early, but
+final approval waits until implementation writers finish and evaluated source is
+frozen; final review and verification then run in parallel. A relevant later write
+invalidates that scope's previous approval and test evidence.
+
+Auto-selected capabilities complement those branches: browser work selects
+Playwright, semantic navigation selects Serena, library documentation selects
+Context7, and remote issues/traces select GitHub/Sentry when relevant. Independent
+sources can run together; tool enablement, connection and successful queries remain
+distinct observations. See [automatic MCP routing](mcp-profiles.md).
+
 ## What a checkpoint means
 
 Prefer a supported native artifact. Only the coordinator maintains the task

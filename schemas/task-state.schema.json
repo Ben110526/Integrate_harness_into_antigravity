@@ -39,6 +39,59 @@
     "active_milestone": {
       "type": "string"
     },
+    "max_workers": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 8,
+      "default": 3
+    },
+    "work_items": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "milestone_id", "role", "status", "dependencies", "read_paths", "write_paths"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_-]{1,64}$"
+          },
+          "milestone_id": {
+            "type": "string",
+            "pattern": "^M[0-9]+$"
+          },
+          "role": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "running", "completed", "failed", "blocked", "cancelled"]
+          },
+          "dependencies": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,64}$"
+            }
+          },
+          "read_paths": {
+            "$ref": "#/$defs/pathScopes"
+          },
+          "write_paths": {
+            "$ref": "#/$defs/pathScopes"
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": -100,
+            "maximum": 100,
+            "default": 0
+          }
+        }
+      }
+    },
     "milestones": {
       "type": "array",
       "items": {
@@ -163,6 +216,16 @@
     },
     "updated_at": {
       "type": "number"
+    }
+  },
+  "$defs": {
+    "pathScopes": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^(?!~)(?!.*(?:^|/)\\.{1,2}(?:/|$))[^/\\\\:\\u0000-\\u001f*?\\[\\]]+(?:/[^/\\\\:\\u0000-\\u001f*?\\[\\]]+)*$"
+      }
     }
   }
 }

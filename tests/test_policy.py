@@ -18,6 +18,7 @@ SKILL_DIRECTORY = AGENT_DIRECTORY.parent / "skills"
 BASELINE_BYTES = 9358
 # Completion registration/reporting adds an always-on contract to the compressed policy.
 COMPLETION_PROTOCOL_BUDGET_BYTES = 2600
+PARALLEL_CAPABILITY_BUDGET_BYTES = 1800
 
 
 class PolicyTests(unittest.TestCase):
@@ -30,7 +31,19 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(self.global_bytes, self.plugin_bytes)
         size = len(self.global_bytes)
         self.assertGreaterEqual(size, BASELINE_BYTES * 0.70)
-        self.assertLessEqual(size, BASELINE_BYTES * 0.82 + COMPLETION_PROTOCOL_BUDGET_BYTES)
+        self.assertLessEqual(size, BASELINE_BYTES * 0.82 + COMPLETION_PROTOCOL_BUDGET_BYTES + PARALLEL_CAPABILITY_BUDGET_BYTES)
+
+    def test_parallel_dispatch_and_automatic_capabilities_are_always_on(self) -> None:
+        for required in (
+            "Launch all ready independent branches before waiting", "at most 3 workers",
+            "observed runtime capacity", "refill free slots", "explicit read/write paths",
+            "freeze the evaluated source", "enabled by default", "initialize missing project metadata automatically",
+            "Enabled, connected, and successfully queried are different states",
+        ):
+            self.assertIn(required, self.policy)
+        complex_route = next(line for line in self.policy.splitlines() if line.startswith('- `COMPLEX_IMPLEMENT`:'))
+        for role in ('harness-researcher', 'harness-implementer', 'harness-reviewer', 'harness-verifier'):
+            self.assertIn(f'`{role}`', complex_route)
 
     def test_completion_and_business_rule_contracts_are_always_on(self) -> None:
         for required in (

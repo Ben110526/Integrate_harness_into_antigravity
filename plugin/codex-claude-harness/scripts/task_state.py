@@ -14,9 +14,11 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import sys
 import tempfile
 import time
+import unicodedata
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Union
 
 
@@ -34,6 +36,11 @@ VALID_TASK_STATUSES = {"pending", "in_progress", "completed", "blocked", "cancel
 VALID_MILESTONE_STATUSES = {"pending", "in_progress", "verified", "skipped"}
 VALID_AC_STATUSES = {"pending", "in_progress", "verified", "superseded"}
 VALID_TEST_COUNT_STATUSES = {"runner-enforced", "unverified"}
+VALID_WORK_STATUSES = {"pending", "running", "completed", "failed", "blocked", "cancelled"}
+FINAL_CHECK_ROLES = {"reviewer", "verifier", "harness-reviewer", "harness-verifier"}
+MAX_WORK_ITEMS = 128
+DEFAULT_MAX_WORKERS = 3
+MAX_WORKERS = 8
 
 IGNORED_FINGERPRINT_DIRS = {
     ".git",
@@ -84,6 +91,115 @@ def get_task_state_path(workspace: Path, task_id: str) -> Path:
     return get_task_dir(workspace, task_id) / "state.json"
 
 
+def _is_normalized_scope(value: Any) -> bool:
+    """Accept literal relative scopes, never path aliases or glob expressions."""
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and not value.startswith(("/", "~"))
+        and not any(char in value for char in "\\:*?[]")
+        and not any(ord(char) < 32 for char in value)
+        and all(part not in {"", ".", ".."} for part in value.split("/"))
+    )
+
+
+def _validate_work_items(data: Dict[str, Any]) -> List[str]:
+    """Validate the optional dependency graph without changing legacy checkpoints."""
+    errors: List[str] = []
+    max_workers = data.get("max_workers", DEFAULT_MAX_WORKERS)
+    if type(max_workers) is not int or not 1 <= max_workers <= MAX_WORKERS:
+        errors.append(f"max_workers must be an integer between 1 and {MAX_WORKERS}")
+    if "work_items" not in data:
+        return errors
+    items = data["work_items"]
+    if not isinstance(items, list):
+        return errors + ["work_items must be an array"]
+    if len(items) > MAX_WORK_ITEMS:
+        errors.append(f"work_items must contain at most {MAX_WORK_ITEMS} entries")
+        return errors
+
+    milestones = data.get("milestones", [])
+    milestone_ids = [ms.get("id") for ms in milestones if isinstance(ms, dict)] if isinstance(milestones, list) else []
+    known_milestones = {ms_id for ms_id in milestone_ids if isinstance(ms_id, str)}
+    if len(known_milestones) != len(milestone_ids):
+        errors.append("work_items require unique valid milestone IDs")
+    active_milestone = data.get("active_milestone")
+    if not isinstance(active_milestone, str) or active_milestone not in known_milestones:
+        errors.append("active_milestone must reference an existing milestone for work_items")
+
+    graph: Dict[str, List[str]] = {}
+    allowed = {"id", "milestone_id", "role", "status", "dependencies", "read_paths", "write_paths", "priority"}
+    required = allowed - {"priority"}
+    for idx, item in enumerate(items):
+        label = f"work_items[{idx}]"
+        if not isinstance(item, dict):
+            errors.append(f"{label} must be an object")
+            continue
+        missing = required - item.keys()
+        extra = item.keys() - allowed
+        if missing:
+            errors.append(f"{label} missing required properties: {sorted(missing)}")
+        if extra:
+            errors.append(f"{label} has unexpected keys: {sorted(extra)}")
+        work_id = item.get("id")
+        safe_id = is_safe_task_id(work_id)
+        if not safe_id:
+            errors.append(f"{label}.id must match {TASK_ID_REGEX.pattern}")
+        elif work_id in graph:
+            errors.append(f"Duplicate work item ID: {work_id}")
+        milestone_id = item.get("milestone_id")
+        if not isinstance(milestone_id, str) or milestone_id not in known_milestones:
+            errors.append(f"{label}.milestone_id must reference an existing milestone")
+        role = item.get("role")
+        if not isinstance(role, str) or not role.strip():
+            errors.append(f"{label}.role must be a non-empty string")
+        if not isinstance(item.get("status"), str) or item["status"] not in VALID_WORK_STATUSES:
+            errors.append(f"{label}.status invalid")
+        dependencies = item.get("dependencies")
+        valid_deps = isinstance(dependencies, list) and all(is_safe_task_id(dep) for dep in dependencies)
+        if not valid_deps:
+            errors.append(f"{label}.dependencies must be a list of safe work item IDs")
+        elif len(set(dependencies)) != len(dependencies):
+            errors.append(f"{label}.dependencies must be unique")
+        if safe_id and work_id not in graph:
+            graph[work_id] = dependencies if valid_deps else []
+        for field in ("read_paths", "write_paths"):
+            scopes = item.get(field)
+            if not isinstance(scopes, list) or not all(_is_normalized_scope(scope) for scope in scopes):
+                errors.append(f"{label}.{field} must contain normalized literal workspace-relative paths")
+            elif len(set(scopes)) != len(scopes):
+                errors.append(f"{label}.{field} must be unique")
+        if isinstance(role, str) and role.strip().casefold() in FINAL_CHECK_ROLES and item.get("write_paths"):
+            errors.append(f"{label} final reviewer/verifier must be read-only")
+        priority = item.get("priority", 0)
+        if type(priority) is not int or not -100 <= priority <= 100:
+            errors.append(f"{label}.priority must be an integer between -100 and 100")
+
+    for work_id, dependencies in graph.items():
+        for dependency in dependencies:
+            if dependency not in graph:
+                errors.append(f"Work item {work_id} has unknown dependency: {dependency}")
+    visiting: Set[str] = set()
+    visited: Set[str] = set()
+
+    def visit(work_id: str) -> bool:
+        if work_id in visiting:
+            return False
+        if work_id in visited:
+            return True
+        visiting.add(work_id)
+        for dependency in graph[work_id]:
+            if dependency in graph and not visit(dependency):
+                return False
+        visiting.remove(work_id)
+        visited.add(work_id)
+        return True
+
+    if any(not visit(work_id) for work_id in graph):
+        errors.append("work_items dependencies must be acyclic")
+    return errors
+
+
 def validate_task_state(data: Any) -> Tuple[bool, List[str]]:
     """Validate task state data against task-state.schema.json constraints.
 
@@ -109,6 +225,8 @@ def validate_task_state(data: Any) -> Tuple[bool, List[str]]:
         "blockers",
         "next_action",
         "updated_at",
+        "work_items",
+        "max_workers",
     }
     extra_keys = set(data.keys()) - allowed_keys
     if extra_keys:
@@ -254,7 +372,144 @@ def validate_task_state(data: Any) -> Tuple[bool, List[str]]:
     if "updated_at" in data and not isinstance(data["updated_at"], (int, float)):
         errors.append("updated_at must be a timestamp number")
 
+    errors.extend(_validate_work_items(data))
+
     return len(errors) == 0, errors
+
+
+def plan_ready_work(state: Dict[str, Any], available_slots: Optional[int] = None) -> Dict[str, Any]:
+    """Return a read-only launch plan; never invoke agents or update checkpoints.
+
+    The coordinator must revalidate runtime worker IDs, capacity, source stability,
+    authority, and file ownership before native dispatch. Completed work items are
+    dependency bookkeeping, not authenticated test evidence or AC acceptance.
+    Final roles use reviewer/verifier (optionally harness-prefixed); preparation
+    must use separate read-only work items. Scopes are literal paths, overlap is
+    conservatively case-insensitive, and symlinks are resolved against the actual
+    workspace. Any existing directory scope serializes write-related comparisons
+    with every counterpart because nested aliases cannot be ruled out without a
+    scan; read/read sharing remains allowed. Prefer exact file scopes for parallel
+    writers. Undeclared side effects and milestone-level dependency readiness remain
+    coordinator responsibilities. A filesystem change after planning can invalidate
+    this advisory result; this helper supplies neither filesystem locks nor a scheduler.
+    """
+    valid, errors = validate_task_state(state)
+    if not valid:
+        raise ValueError(f"Cannot plan invalid task state: {'; '.join(errors)}")
+    if available_slots is not None and (type(available_slots) is not int or available_slots < 0):
+        raise ValueError("available_slots must be a non-negative integer")
+    items = state.get("work_items", [])
+    max_workers = state.get("max_workers", DEFAULT_MAX_WORKERS)
+    running = [item for item in items if item["status"] == "running"]
+    capacity = max(0, max_workers - len(running))
+    if available_slots is not None:
+        capacity = min(capacity, available_slots)
+    result: Dict[str, Any] = {
+        "runnable": [], "waiting": {}, "running": [item["id"] for item in running],
+        "max_workers": max_workers, "available_slots": capacity,
+    }
+    if not items:
+        return result
+    workspace = state.get("workspace")
+    if not isinstance(workspace, str) or not Path(workspace).is_absolute():
+        raise ValueError("Planning work_items requires an absolute workspace")
+    try:
+        root = Path(workspace).resolve(strict=True)
+        if not root.is_dir():
+            raise ValueError("Planning workspace must be a directory")
+        scopes: Dict[str, Dict[str, List[Path]]] = {}
+        directory_scopes: Dict[Path, bool] = {}
+        for item in items:
+            scopes[item["id"]] = {}
+            for field in ("read_paths", "write_paths"):
+                resolved: List[Path] = []
+                for scope in item[field]:
+                    path = (root / scope).resolve(strict=False)
+                    try:
+                        path.relative_to(root)
+                    except ValueError as err:
+                        raise ValueError(f"Work item {item['id']} path escapes workspace: {scope}") from err
+                    try:
+                        directory_scopes[path] = stat.S_ISDIR(path.stat().st_mode)
+                    except FileNotFoundError:
+                        directory_scopes[path] = False
+                    except OSError as err:
+                        raise ValueError(f"Cannot inspect planning scope {scope}: {err}") from err
+                    resolved.append(path)
+                scopes[item["id"]][field] = resolved
+    except (OSError, RuntimeError) as err:
+        raise ValueError(f"Cannot resolve planning workspace/scopes: {err}") from err
+
+    def overlaps(first: Path, second: Path) -> bool:
+        if directory_scopes[first] or directory_scopes[second]:
+            return True
+        left = tuple(unicodedata.normalize("NFC", part).casefold() for part in first.parts)
+        right = tuple(unicodedata.normalize("NFC", part).casefold() for part in second.parts)
+        if left[:len(right)] == right or right[:len(left)] == left:
+            return True
+        try:
+            return first.samefile(second)
+        except (OSError, ValueError):
+            return False
+
+    def conflicts(first: Dict[str, Any], second: Dict[str, Any]) -> bool:
+        left, right = scopes[first["id"]], scopes[second["id"]]
+        return any(overlaps(a, b) for a in left["write_paths"] for b in right["read_paths"] + right["write_paths"]) or any(
+            overlaps(a, b) for a in left["read_paths"] for b in right["write_paths"]
+        )
+
+    for index, item in enumerate(running):
+        for other in running[index + 1:]:
+            if conflicts(item, other):
+                raise ValueError(f"Already-running work items have conflicting read/write scopes: {item['id']}, {other['id']}")
+
+    by_id = {item["id"]: item for item in items}
+    children: Dict[str, List[str]] = {work_id: [] for work_id in by_id}
+    for item in items:
+        for dependency in item["dependencies"]:
+            children[dependency].append(item["id"])
+    depths: Dict[str, int] = {}
+
+    def downstream_depth(work_id: str) -> int:
+        if work_id not in depths:
+            depths[work_id] = max((1 + downstream_depth(child) for child in children[work_id]), default=0)
+        return depths[work_id]
+
+    active = state["active_milestone"]
+    writers = [item for item in items if item["milestone_id"] == active and item["write_paths"]]
+    if any(writer["status"] != "completed" for writer in writers) and any(
+        item["milestone_id"] == active and item["role"].strip().casefold() in FINAL_CHECK_ROLES for item in running
+    ):
+        raise ValueError("Running final reviewer/verifier requires all active milestone writers completed")
+    candidates = sorted(enumerate(items), key=lambda pair: (-downstream_depth(pair[1]["id"]), -pair[1].get("priority", 0), pair[0]))
+    selected: List[Dict[str, Any]] = []
+    for _, item in candidates:
+        if item["status"] != "pending":
+            continue
+        work_id = item["id"]
+        reason: Optional[str] = None
+        if state["status"] in {"completed", "cancelled"}:
+            reason = f"Task is {state['status']}"
+        elif item["milestone_id"] != active:
+            reason = "Milestone is not active"
+        else:
+            unfinished = [dep for dep in item["dependencies"] if by_id[dep]["status"] != "completed"]
+            if unfinished:
+                reason = "Dependencies not completed: " + ", ".join(f"{dep} ({by_id[dep]['status']})" for dep in unfinished)
+            elif item["role"].strip().casefold() in FINAL_CHECK_ROLES and any(writer["status"] != "completed" for writer in writers):
+                reason = "Final review/verification awaits all active milestone writers"
+            else:
+                owner = next((other["id"] for other in running + selected if conflicts(item, other)), None)
+                if owner:
+                    reason = f"Read/write scope conflicts with {owner}"
+                elif len(selected) >= capacity:
+                    reason = "No available worker slot"
+        if reason:
+            result["waiting"][work_id] = reason
+        else:
+            selected.append(item)
+            result["runnable"].append(work_id)
+    return result
 
 
 def compute_file_sha256(path: Path) -> Optional[str]:
@@ -631,6 +886,11 @@ def main() -> None:
     fp_parser = subparsers.add_parser("fingerprint", help="Compute source fingerprint for workspace")
     fp_parser.add_argument("workspace", nargs="?", default=".", help="Workspace path")
 
+    dispatch_parser = subparsers.add_parser("dispatch-plan", help="Print ready work without launching agents or modifying state")
+    dispatch_parser.add_argument("--task-id", required=True, help="Task ID to plan")
+    dispatch_parser.add_argument("--workspace", default=".", help="Workspace path")
+    dispatch_parser.add_argument("--available-slots", type=int, default=None, help="Current runtime capacity for new workers")
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
@@ -681,6 +941,20 @@ def main() -> None:
             sys.exit(1)
         assessment = assess_task_resumption(ws, state, current_brief_revision=args.brief_revision)
         print(json.dumps(assessment, indent=2))
+
+    elif args.command == "dispatch-plan":
+        ws = Path(args.workspace).resolve()
+        try:
+            state = load_task_state(ws, args.task_id)
+            if state is None:
+                raise ValueError(f"Task {args.task_id} not found or corrupted in {ws}")
+            if state.get("workspace") and Path(state["workspace"]).resolve() != ws:
+                raise ValueError("Task workspace provenance mismatch")
+            state["workspace"] = str(ws)
+            print(json.dumps(plan_ready_work(state, args.available_slots), indent=2))
+        except (ValueError, OSError, RuntimeError) as err:
+            print(f"Cannot produce dispatch plan: {err}", file=sys.stderr)
+            sys.exit(1)
 
     elif args.command == "validate":
         target_path = Path(args.target)

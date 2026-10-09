@@ -24,7 +24,7 @@ fi
 bash -n "${shell_files[@]}"
 
 printf '[check] eval, policy, and lifecycle fixture coverage\n'
-python3 -m unittest -q tests/test_evals.py tests/test_policy.py tests/test_lifecycle_guard.py tests/test_verification_gate.py tests/test_task_completion.py
+python3 -m unittest -q tests/test_evals.py tests/test_policy.py tests/test_lifecycle_guard.py tests/test_verification_gate.py tests/test_task_completion.py tests/test_task_state.py tests/test_parallel_dispatch.py
 
 printf '[check] strict MCP profile renderer\n'
 command -v node >/dev/null 2>&1 || fail 'Node.js is required for MCP profile renderer checks'

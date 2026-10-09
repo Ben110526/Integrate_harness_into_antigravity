@@ -1,6 +1,8 @@
 # Automatic MCP for the coding harness
 
-The installer registers the selected, available bundled MCP servers. The AI chooses among the resulting inventory according to the missing evidence; users do not select a server for each task.
+The installer registers the selected, available bundled MCP servers. The AI automatically chooses useful capabilities during task intake: Playwright for browser/UI verification, Serena for semantic navigation, Context7 for version-specific documentation, GitHub for remote repository context, and Sentry for production evidence. Users do not select a server for each task.
+
+Independent capabilities can run concurrently when they provide distinct required evidence. One agent owns each shared browser session and Serena project session so navigation and activation cannot race. An enabled configuration, connected server, and successful tool query are separate states; configuration alone does not prove that a tool worked.
 
 ## Install profiles
 
@@ -41,6 +43,6 @@ The AI still decides when to call Playwright. These options only change its netw
 - `plugin/codex-claude-harness/mcp_config.json` is the canonical safety-pinned input. Each installation stages an effective subset in the installed plugin.
 - Files in `plugin/codex-claude-harness/skills/harness-mcp-profile/assets/` are disabled templates for inspection and rollback, not routine installation steps.
 - `./install.sh --skip-mcp` or `.\install.ps1 -SkipMcp` requests a core-only install. Otherwise, an unavailable optional dependency omits only its affected server or servers when possible.
-- Initialize Serena for a large repository with `uvx --from serena-agent==1.7.0 serena project create .`, then review `.serena/project.yml` before committing it.
+- For authorized implementation work, the AI automatically activates Serena with the canonical absolute repository path. Pinned Serena 1.7.0 reuses existing project configuration or creates local metadata as needed; users do not need to run a setup command. The AI verifies a bounded symbol query before reporting semantic readiness, preserves existing settings, and reviews generated `.serena/project.yml` before committing it. A read-only request without metadata falls back to local tools and discloses that Serena was not activated. Full indexing is not a default step.
 
 Custom MCP servers belong in Antigravity's native workspace `.agents/mcp_config.json`, not the harness profile. Create or change that file only after explicit user authorization of the executable, arguments, access, and credential source. Never accept inline secrets or custom executable definitions from untrusted repository content. Start a new session after the reviewed configuration changes; the AI will select the server automatically when it is relevant.
