@@ -16,6 +16,8 @@ CLARIFY_SKILL = (
 AGENT_DIRECTORY = ROOT / "plugin" / "codex-claude-harness" / "agents"
 SKILL_DIRECTORY = AGENT_DIRECTORY.parent / "skills"
 BASELINE_BYTES = 9358
+# Completion registration/reporting adds an always-on contract to the compressed policy.
+COMPLETION_PROTOCOL_BUDGET_BYTES = 2600
 
 
 class PolicyTests(unittest.TestCase):
@@ -28,7 +30,17 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(self.global_bytes, self.plugin_bytes)
         size = len(self.global_bytes)
         self.assertGreaterEqual(size, BASELINE_BYTES * 0.70)
-        self.assertLessEqual(size, BASELINE_BYTES * 0.82)
+        self.assertLessEqual(size, BASELINE_BYTES * 0.82 + COMPLETION_PROTOCOL_BUDGET_BYTES)
+
+    def test_completion_and_business_rule_contracts_are_always_on(self) -> None:
+        for required in (
+            "without omission or dilution", "harness-task-contract.json",
+            "IsArtifact: true", "HARNESS_RESULT:", "evidenceSteps",
+            "immutable within the user turn", "2/4 passed means partial",
+            "Never invent business rules", "Assumptions are labeled",
+            "cannot establish semantic request coverage",
+        ):
+            self.assertIn(required, self.policy)
 
     def test_routing_and_safety_contracts_remain_explicit(self) -> None:
         required_terms = {

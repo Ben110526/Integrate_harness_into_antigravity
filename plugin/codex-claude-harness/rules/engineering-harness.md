@@ -26,7 +26,7 @@ Specialists: MUST use read-only `harness-db-architect` before schema/migration/q
 
 Reviewer/verifier receive diff, contracts, criteria—not claims—and stay read-only/independent. `REVIEW_VERIFY` prioritizes impact and narrow safe reproduction.
 
-Verification is bounded and non-recursive. Inside Antigravity, never launch `agy`, `doctor.sh`, `install.sh`, `install.ps1`, installers/background tasks/sandbox bypass unless installation testing was requested. Prefer local checks; disclose skips. End non-direct responses with `Harness: <ROUTE>; passed: ...; failed/skipped: ...`. For an undiscoverable material decision, main uses `/harness-clarify` and `ask_question`; subagents return `[UNRESOLVED]`.
+Verification is bounded and non-recursive. Inside Antigravity, never launch `agy`, `doctor.sh`, `install.sh`, `install.ps1`, installers/background tasks/sandbox bypass unless installation testing was requested. Prefer local checks; disclose skips. Include `Harness: <ROUTE>; passed: ...; failed/skipped: ...` in non-direct handoffs. For an undiscoverable material decision, main uses `/harness-clarify` and `ask_question`; subagents return `[UNRESOLVED]`.
 
 ## Automatic MCP routing
 
@@ -50,11 +50,17 @@ Namespaced MCP is pre-registered. Use only when evidence warrants it; never ask 
 For authorized multi-milestone work, load `/harness-run`: one coordinator, task-scoped context, current-source AC evidence, native-first checkpoint/resume, and next dispatch within the active turn. Keep tiny and plan-only paths unchanged; no background continuation or extra authority is implied.
 
 1. Read the request, closest instructions, git state, and smallest relevant slice; never edit on read-only requests.
-2. Define criteria; use stable `AC-*` IDs for complex work. Resolve conflicts by request, contracts, tests/types, call sites/behavior, authoritative docs, then labeled assumptions; surface conflicts.
+2. Map every user requirement without omission or dilution to observable acceptance criteria; use stable `AC-*` IDs for complex work. Before product edits outside the inline fast path, main registers `harness-task-contract.json` as an artifact with `write_to_file`, `IsArtifact: true`, and `CodeContent` JSON: `{"version":1,"requirements":[{"id":"AC-1","request":"exact substring of current user request","acceptance":"observable expected behavior","verification":"behavioral"}]}`. Use `static` only for static acceptance. Keep IDs, request excerpts, acceptance, and verification immutable within the user turn; corrections require explicit new user scope. Preserve the full inventory across handoffs. Resolve conflicts by request, contracts, tests/types, call sites/behavior, authoritative docs, then labeled assumptions; surface conflicts.
 3. Before bug fixes, establish a focused failure when practical. Add/update the narrowest useful behavior test; use strong static checks for docs/mechanical/config.
 4. For complex work, first delegate bounded independent branches with `invoke_subagent(TypeName=..., Role=..., Workspace="inherit", Prompt=...)`. Follow `COMPLEX_IMPLEMENT`; never replace independent checks with self-review.
 5. Make the smallest root-cause fix; preserve conventions, unrelated changes, and public interfaces unless migration requires otherwise; avoid false-success fallbacks.
-6. After the final write, verification is debt: run the narrowest relevant runnable check, then wider checks when useful. Waive only if none exists; record why and never call it a pass. Cite `[label](relative/path:line)`; the Stop hook grounds explicit Markdown and `file://` links. Report outcomes/risks; never claim success over failed/unrun checks.
+6. After the final write, verification is debt: run the narrowest relevant runnable check, then wider checks when useful. Waive only if none exists; record why and never call it a pass. Cite `[label](relative/path:line)`; the Stop hook grounds explicit Markdown and `file://` links. Report outcomes/risks; never claim success over failed/unrun checks. For a registered contract, emit one single-line `HARNESS_RESULT: {"status":"complete","requirements":[{"id":"AC-1","status":"passed","evidenceSteps":[12]}]}`. Keep every registered ID exactly once; statuses are `passed|failed|blocked|unverified`, with a reason for every nonpassed row. Use top-level `partial|blocked` unless every row passed; state exact counts. Evidence steps must be observed successful relevant checks after registration and the final workspace write; behavioral criteria need behavioral checks. Main reruns relevant checks if subagent evidence is not observed in its hook state. If step IDs are hidden, read the artifact `.codex-claude-harness-verification.json` `checkEvents`; never guess IDs.
+
+## Truthful acceptance
+
+- Never invent business rules or silently choose a material default. Discover sources, expose conflicts, and ask through main clarification when a missing rule changes behavior; pause only dependent work. Assumptions are labeled and do not establish acceptance.
+- No mock, stub, placeholder, weakened test, invented command/exit status, or unrelated passing check counts as delivered behavior. Keep later failures visible; 2/4 passed means partial, never complete.
+- The completion gate rejects inconsistent results on compatible transcripts; unavailable schema/state/runtime may fail open. It cannot establish semantic request coverage, business correctness, or check relevance; independent verification remains required. See `docs/task-completion.md` in the harness source for the protocol and limits.
 
 ## Tool, file, and safety discipline
 
