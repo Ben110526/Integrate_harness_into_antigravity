@@ -56,6 +56,8 @@ class ImplementationBenchmarkTests(unittest.TestCase):
         self.original_run = subprocess.run
         self.calls = []
         self.behaviors = []
+        self.versions = []
+        self.version_observations = 0
         mock.patch.object(benchmark.subprocess, "run", side_effect=self.fake_cli).start()
 
     def write_policy(self, source):
@@ -75,7 +77,10 @@ class ImplementationBenchmarkTests(unittest.TestCase):
         if command[0] != "agy":
             return self.original_run(command, **kwargs)
         if command[1:] == ["--version"]:
-            return subprocess.CompletedProcess(command, 0, "Antigravity 1.2.7\n", "")
+            self.version_observations += 1
+            version = self.versions.pop(0) if self.versions else "1.2.7"
+            return subprocess.CompletedProcess(command, 1 if version is None else 0,
+                                               "Antigravity " + (version or "") + "\n", "PRIVATE version diagnostics")
         workspace = pathlib.Path(kwargs["cwd"])
         self.calls.append((str(workspace), (workspace / "calc.py").read_text(), (workspace / "notes.md").read_text(), list(command)))
         behavior = self.behaviors.pop(0) if self.behaviors else "complete"
@@ -127,6 +132,7 @@ class ImplementationBenchmarkTests(unittest.TestCase):
         code, records = self.main()
         self.assertEqual(code, 0)
         self.assertEqual(len(self.calls), 3)
+        self.assertEqual(self.version_observations, 7)
         self.assertEqual(len({item[0] for item in self.calls}), 3)
         self.assertTrue(all(item[1] == "def one(): return 0\ndef two(): return 0\n" for item in self.calls))
         self.assertTrue(all(item[2] == "User-owned edit.\n" for item in self.calls))
@@ -134,6 +140,9 @@ class ImplementationBenchmarkTests(unittest.TestCase):
         self.assertEqual(benchmark.snapshot(self.fixture), before)
         samples = [item for item in records if item["event"] == "implementation_benchmark_sample"]
         self.assertTrue(all(item["initial_prompt_complete"] for item in samples))
+        self.assertTrue(all(item["comparison_valid"] and item["profile_error"] is None for item in samples))
+        self.assertTrue(all(item["version_before"] == item["version_after"] == "1.2.7" for item in samples))
+        self.assertTrue(all(item["model_call_started"] for item in samples))
         self.assertTrue(all(item["report_truthfulness"] is True for item in samples))
         self.assertTrue(all(item["suite"]["executed"] == 2 for item in samples))
         self.assertTrue(all([ac["executed"] for ac in item["acceptance"]] == [1, 1] for item in samples))
@@ -145,6 +154,11 @@ class ImplementationBenchmarkTests(unittest.TestCase):
         self.assertEqual(summary["complete_samples"], 3)
         self.assertEqual(summary["duration_all"]["count"], 3)
         self.assertEqual(summary["usage_observed_samples"], 3)
+        self.assertEqual(summary["quota_calls_started"], 3)
+        self.assertEqual(summary["profile_valid_samples"], 3)
+        self.assertEqual(summary["profile_invalid_samples"], 0)
+        self.assertTrue(summary["comparison_valid"])
+        self.assertEqual(summary["benchmark_protocol"], 3)
 
     def test_timeout_and_cli_failure_stay_in_denominator_and_duration(self):
         self.behaviors = ["complete", "timeout", "cli_failure"]
@@ -153,6 +167,8 @@ class ImplementationBenchmarkTests(unittest.TestCase):
         samples = [item for item in records if item["event"] == "implementation_benchmark_sample"]
         self.assertEqual([item["failure_kind"] for item in samples], [None, "timeout", "cli_exit"])
         self.assertEqual(samples[1]["usage"], None)
+        self.assertTrue(samples[1]["comparison_valid"])
+        self.assertTrue(samples[1]["model_call_started"])
         self.assertTrue(all(ac["status"] == "failed" for ac in samples[1]["acceptance"]))
         summary = next(item for item in records if item["event"] == "implementation_benchmark_summary")
         self.assertEqual(summary["requested_samples"], 3)
@@ -360,6 +376,74 @@ class ImplementationBenchmarkTests(unittest.TestCase):
         second = benchmark.matching_global_policy_digest(benchmark.ROOT)
         self.assertEqual(first, second)
         self.assertEqual(len(first), 64)
+
+    def test_cli_drift_before_each_call_refuses_all_samples_without_quota(self):
+        self.versions = ["1.2.7", "1.3.2", "1.3.2", "1.3.2"]
+        code, records = self.main()
+        self.assertEqual(code, 1)
+        self.assertEqual(self.calls, [])
+        samples = [item for item in records if item["event"] == "implementation_benchmark_sample"]
+        self.assertEqual(len(samples), 3)
+        self.assertTrue(all(item["version_before"] == "1.3.2" and item["version_after"] is None for item in samples))
+        self.assertTrue(all(not item["model_call_started"] and not item["comparison_valid"] for item in samples))
+        self.assertTrue(all(item["profile_error"] == "cli_version_before_changed" for item in samples))
+        self.assertTrue(all(item["comparison_key"] is None for item in samples))
+        summary = next(item for item in records if item["event"] == "implementation_benchmark_summary")
+        self.assertIsNone(summary["comparison_key"])
+        self.assertEqual(summary["requested_samples"], 3)
+        self.assertEqual(summary["quota_calls_started"], 0)
+        self.assertEqual(summary["failed_samples"], 3)
+        self.assertEqual(summary["profile_valid_samples"], 0)
+        self.assertEqual(summary["profile_invalid_samples"], 3)
+        self.assertEqual(summary["duration_all"]["count"], 3)
+
+    def test_cli_drift_after_call_preserves_actual_outcome_but_invalidates_comparison(self):
+        self.versions = ["1.2.7", "1.2.7", "1.3.2", "1.2.7", "1.2.7", "1.2.7", "1.2.7"]
+        code, records = self.main()
+        self.assertEqual(code, 1)
+        self.assertEqual(len(self.calls), 3)
+        samples = [item for item in records if item["event"] == "implementation_benchmark_sample"]
+        first = samples[0]
+        self.assertEqual(first["version_before"], "1.2.7")
+        self.assertEqual(first["version_after"], "1.3.2")
+        self.assertEqual(first["profile_error"], "cli_version_after_changed")
+        self.assertTrue(first["model_call_started"])
+        self.assertFalse(first["comparison_valid"])
+        self.assertIsNone(first["comparison_key"])
+        self.assertTrue(first["task_fulfillment"])
+        self.assertTrue(first["initial_prompt_complete"])
+        self.assertTrue(first["report_truthfulness"])
+        self.assertFalse(first["false_complete"])
+        self.assertEqual(first["status"], "SUCCESS")
+        summary = next(item for item in records if item["event"] == "implementation_benchmark_summary")
+        self.assertEqual(summary["requested_samples"], 3)
+        self.assertEqual(summary["quota_calls_started"], 3)
+        self.assertEqual(summary["complete_samples"], 3)
+        self.assertEqual(summary["failed_samples"], 0)
+        self.assertEqual(summary["profile_valid_samples"], 2)
+        self.assertEqual(summary["profile_valid_complete_samples"], 2)
+        self.assertEqual(summary["profile_invalid_samples"], 1)
+        self.assertIsNone(summary["comparison_key"])
+        self.assertFalse(records[-1]["comparison_valid"])
+
+    def test_unavailable_cli_version_before_or_after_call_invalidates_only_profile(self):
+        self.versions = [None]
+        before = benchmark.run_sample(self.case, "model-high", "json", 10, expected_cli_version="1.2.7")
+        self.assertEqual(self.calls, [])
+        self.assertIsNone(before["version_before"])
+        self.assertFalse(before["model_call_started"])
+        self.assertFalse(before["comparison_valid"])
+        self.assertEqual(before["profile_error"], "cli_version_before_unavailable")
+        self.versions = ["1.2.7", None]
+        after = benchmark.run_sample(self.case, "model-high", "json", 10, expected_cli_version="1.2.7")
+        self.assertEqual(len(self.calls), 1)
+        self.assertTrue(after["model_call_started"])
+        self.assertTrue(after["task_fulfillment"])
+        self.assertTrue(after["report_truthfulness"])
+        self.assertTrue(after["initial_prompt_complete"])
+        self.assertFalse(after["comparison_valid"])
+        self.assertEqual(after["profile_error"], "cli_version_after_unavailable")
+        self.assertIsNone(after["version_after"])
 
     def test_fixture_and_manifest_changes_change_hashes(self):
         original = benchmark.snapshot_digest(benchmark.snapshot(self.fixture))

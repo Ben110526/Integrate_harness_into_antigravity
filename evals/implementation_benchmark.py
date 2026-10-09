@@ -172,7 +172,7 @@ def initialize_repository(workspace, empty_hooks):
     return git_command(workspace, ["rev-parse", "HEAD"])
 
 
-def run_sample(case, model, output_format, timeout):
+def run_sample(case, model, output_format, timeout, expected_cli_version=None):
     try:
         from .oracles import verify_command
         from .smoke_results import grade_report, prepare_user_changes, user_changes_preserved
@@ -186,7 +186,8 @@ def run_sample(case, model, output_format, timeout):
         "runner_continuations": 0, "usage": None, "cli_duration_seconds": None,
         "changed_paths": [], "source_scope_valid": False,
         "preexisting_changes_preserved": False, "repository_history_preserved": False,
-        "suite": None,
+        "suite": None, "comparison_valid": False, "profile_error": "model_call_not_started",
+        "version_before": None, "version_after": None, "model_call_started": False,
         "acceptance": [{"id": item["id"], "status": "unverified", "reason": "CLI did not finish"}
                        for item in case["acceptance_criteria"]],
     }
@@ -212,16 +213,38 @@ def run_sample(case, model, output_format, timeout):
                        "--add-dir", str(workspace), "--sandbox", "--mode=accept-edits",
                        "--output-format", output_format, "--print-timeout", str(timeout) + "s"]
             completed = None
-            try:
-                completed = subprocess.run(
-                    command, cwd=str(workspace), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                    text=True, timeout=timeout, check=False,
-                    env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-                )
-            except subprocess.TimeoutExpired:
-                sample["failure_kind"] = "timeout"
-            except OSError:
-                sample["failure_kind"] = "cli_launch"
+            sample["version_before"] = observed_cli_version()
+            expected_version = expected_cli_version or sample["version_before"]
+            if sample["version_before"] is None:
+                sample["profile_error"] = "cli_version_before_unavailable"
+                sample["failure_kind"] = "profile_preflight"
+            elif sample["version_before"] != expected_version:
+                sample["profile_error"] = "cli_version_before_changed"
+                sample["failure_kind"] = "profile_preflight"
+            else:
+                sample["model_call_started"] = True
+                try:
+                    completed = subprocess.run(
+                        command, cwd=str(workspace), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                        text=True, timeout=timeout, check=False,
+                        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                    )
+                except subprocess.TimeoutExpired:
+                    sample["failure_kind"] = "timeout"
+                except OSError:
+                    sample["failure_kind"] = "cli_launch"
+                    sample["model_call_started"] = False
+                finally:
+                    sample["version_after"] = observed_cli_version()
+                    if sample["version_after"] is None:
+                        sample["profile_error"] = "cli_version_after_unavailable"
+                    elif sample["version_after"] != expected_version:
+                        sample["profile_error"] = "cli_version_after_changed"
+                    elif not sample["model_call_started"]:
+                        sample["profile_error"] = "model_call_not_started"
+                    else:
+                        sample["profile_error"] = None
+                        sample["comparison_valid"] = True
             if completed is not None:
                 if completed.returncode != 0:
                     sample["failure_kind"] = "cli_exit"
@@ -325,6 +348,11 @@ def summarize(samples):
     usage = [sample["usage"] for sample in samples if sample["usage"] is not None]
     return {
         "requested_samples": len(samples), "complete_samples": len(successes),
+        "quota_calls_started": sum(sample["model_call_started"] for sample in samples),
+        "profile_valid_samples": sum(sample["comparison_valid"] for sample in samples),
+        "profile_invalid_samples": sum(not sample["comparison_valid"] for sample in samples),
+        "profile_valid_complete_samples": sum(sample["comparison_valid"] and sample["initial_prompt_complete"] for sample in samples),
+        "comparison_valid": all(sample["comparison_valid"] for sample in samples),
         "failed_samples": len(samples) - len(successes),
         "initial_prompt_completion_rate": len(successes) / len(samples) if samples else None,
         "false_complete_samples": sum(sample["false_complete"] is True for sample in samples),
@@ -406,6 +434,14 @@ def cli_version():
     return match.group(0)
 
 
+def observed_cli_version():
+    """Version probes are metadata only; private diagnostics remain discarded."""
+    try:
+        return cli_version()
+    except (quota.BenchmarkError, OSError, subprocess.SubprocessError):
+        return None
+
+
 def parser():
     result = argparse.ArgumentParser(description="Opt-in repeated implementation pilot with independent AC grading")
     result.add_argument("--case", action="append", dest="cases", required=True)
@@ -443,7 +479,7 @@ def main(argv=None):
         behavior = matching_harness_digest(args.harness_source)
         global_policy = matching_global_policy_digest(args.harness_source)
         metadata = {
-            "benchmark_protocol": 2, "label": args.label,
+            "benchmark_protocol": 3, "label": args.label,
             "manifest_digest": hashlib.sha256(CASES_PATH.read_bytes()).hexdigest(),
             "runner_digest": runner_digest(), "source_behavior_digest": behavior,
             "installed_behavior_digest": behavior,
@@ -463,6 +499,8 @@ def main(argv=None):
         return 2
     quota.emit({"event": "implementation_benchmark_start", **metadata, "requested_samples": len(cases) * args.repeat})
     failed = 0
+    profile_invalid = 0
+    quota_calls_started = 0
     for case in cases:
         samples = []
         comparison = {key: value for key, value in metadata.items() if key not in {"label", "source_revision", "source_worktree_dirty", "source_behavior_digest", "installed_behavior_digest", "source_global_policy_digest", "installed_global_policy_digest"}}
@@ -470,16 +508,23 @@ def main(argv=None):
                            "fixture_digest": snapshot_digest(snapshot(quota.safe_fixture_path(case["fixture"])))})
         comparison_key = digest_json(comparison)
         for repeat in range(1, args.repeat + 1):
-            sample = run_sample(case, args.model, args.output_format, args.timeout_seconds)
+            sample = run_sample(case, args.model, args.output_format, args.timeout_seconds,
+                                expected_cli_version=metadata["cli_version"])
             samples.append(sample)
             failed += not sample["initial_prompt_complete"]
+            profile_invalid += not sample["comparison_valid"]
+            quota_calls_started += sample["model_call_started"]
             quota.emit({"event": "implementation_benchmark_sample", **metadata,
-                        "case_id": case["id"], "case_digest": digest_json(case), "comparison_key": comparison_key,
+                        "case_id": case["id"], "case_digest": digest_json(case),
+                        "comparison_key": comparison_key if sample["comparison_valid"] else None,
                         "repeat_index": repeat, **sample})
         quota.emit({"event": "implementation_benchmark_summary", **metadata, "case_id": case["id"],
-                    "comparison_key": comparison_key, **summarize(samples)})
-    quota.emit({"event": "implementation_benchmark_complete", "requested_samples": len(cases) * args.repeat, "failed_samples": failed})
-    return 1 if failed else 0
+                    "comparison_key": comparison_key if all(sample["comparison_valid"] for sample in samples) else None,
+                    **summarize(samples)})
+    quota.emit({"event": "implementation_benchmark_complete", "requested_samples": len(cases) * args.repeat,
+                "quota_calls_started": quota_calls_started, "failed_samples": failed,
+                "profile_invalid_samples": profile_invalid, "comparison_valid": profile_invalid == 0})
+    return 1 if failed or profile_invalid else 0
 
 
 if __name__ == "__main__":

@@ -307,9 +307,26 @@ harness source revision and dirty-state flag, evaluator revision, CLI version an
 conditions while excluding the compared harness digests, source revision and
 baseline/candidate label. Permission and MCP profile labels are **user-declared**;
 actual grants/connections remain `null`, so independently check those settings
-before treating samples as matched. Protocol version 2 adds fixture permission
-modes and managed global policy checks; do not pool or match earlier protocol
-records with this version. No task-state or completion-contract migration is
+before treating samples as matched. Protocol version 3 observes the CLI version immediately before and after every
+model call. The version before the call must match the batch's declared
+`cli_version`; drift or an unavailable version refuses that requested sample
+without starting a model call. A changed/unavailable version afterward preserves
+the actual task fulfillment, AC and report grading but sets `comparison_valid`
+to false with a separate `profile_error`. `version_before`, `version_after` and
+`model_call_started` disclose those observations. No retries or replacement
+samples are added. A stable pair is observed version evidence, not a guarantee
+against an undetected transient change between the two probes.
+
+Invalid samples have a null `comparison_key`; a case summary also has a null key
+if any requested sample has an invalid profile. Requested attempts, all task
+failures/timeouts and duration remain in the overall denominator. Summaries
+separately count `profile_valid_samples`, `profile_invalid_samples`,
+`profile_valid_complete_samples` and `quota_calls_started`. The last field counts
+model CLI invocations started, including failed/timed-out invocations; actual
+provider billing remains unobserved. A profile failure causes a nonzero benchmark
+exit even if its observed task completed successfully. Protocol 2 recorded only
+a batch-start CLI version, so it cannot prove the runtime version of individual
+trials. Do not pool or match protocol 2 or earlier records with protocol 3. No task-state or completion-contract migration is
 required. At least three repeats per revision form a
 small pilot, not a reliability guarantee. The runner provides no proof of native
 subagent scheduling or measured improvement until real matched runs are made.
