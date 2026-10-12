@@ -1,0 +1,481 @@
+{
+  "schema_version": 1,
+  "evaluation_date": "2026-10-12",
+  "client": "Antigravity first-party CLI",
+  "environment": {
+    "model": "gemini-3.8-flash-high",
+    "cli_version": "1.3.3",
+    "baseline_cli_versions_observed": [
+      "1.3.2",
+      "1.3.3"
+    ],
+    "behavior_sha256": "49faa00a7074fd4628557dbb5ee4f5a76d3ca45de9fc8aa1779bf19c39941ab5",
+    "behavior_digest_excludes_runtime_python": true,
+    "frozen_runtime": {
+      "verification_gate_sha256": "d88a778c7d866fbbe34da732e15eaa55089f4124f7569352c64554312af45cdd",
+      "lifecycle_guard_sha256": "df8be6789564a744ac5b22558e326380134b6d4d656233d5ff8982fbfcff67f3"
+    },
+    "final_installed_runtime": {
+      "verification_gate_sha256": "f79e28aaaaaeced2d32dd92044a02d7090b8decdf90b2b291e37c20215900dd8",
+      "lifecycle_guard_sha256": "df8be6789564a744ac5b22558e326380134b6d4d656233d5ff8982fbfcff67f3",
+      "parser_fix_installed_after_four_turn_eval": true,
+      "source_matches_installed": true,
+      "managed_policy_contains_source_verbatim": true
+    },
+    "global_permissions_changed": false,
+    "native_ask_preserved": true
+  },
+  "baseline": {
+    "artifact": "2026-10-12-live.json",
+    "multiturn_behavior_passed": 8,
+    "multiturn_behavior_total": 8,
+    "multiturn_overall_success": true,
+    "wall_time_minutes_approximate": 29,
+    "final_cli_usage_cumulative": {
+      "input_tokens": 1410072,
+      "output_tokens": 94574,
+      "thinking_tokens": 59927,
+      "cache_read_tokens": 23539714,
+      "total_tokens": 1504646
+    },
+    "simulated_selection_passed": 5,
+    "simulated_selection_total": 5,
+    "simulated_selection_duration_seconds": 23.262,
+    "interactive_browser_assisted": true,
+    "interactive_browser_one_time_mcp_approvals": 5,
+    "autonomous_discovery_proven": false
+  },
+  "multiturn": {
+    "result": {
+      "event": "quality_score",
+      "case": "multiturn-waiting-list",
+      "route": "IMPLEMENT",
+      "passed": 8,
+      "total": 8,
+      "coverage": 1.0,
+      "criteria": [
+        {
+          "id": "AC-1",
+          "description": "Positive integer capacity is enforced without mutating a full list.",
+          "status": "passed"
+        },
+        {
+          "id": "AC-2",
+          "description": "Names are trimmed; blank and non-string joins are rejected without mutation.",
+          "status": "passed"
+        },
+        {
+          "id": "AC-3",
+          "description": "The revised case-sensitive duplicate rule replaces the initial rule consistently.",
+          "status": "passed"
+        },
+        {
+          "id": "AC-4",
+          "description": "Cancellation, lookup positions, and FIFO service behave consistently.",
+          "status": "passed"
+        },
+        {
+          "id": "AC-5",
+          "description": "Cancellation and service free capacity for later joins.",
+          "status": "passed"
+        },
+        {
+          "id": "AC-6",
+          "description": "Bulk joins preserve order, trim names, and return positions, including an empty batch.",
+          "status": "passed"
+        },
+        {
+          "id": "AC-7",
+          "description": "Invalid, duplicate, or over-capacity batches leave the entire list unchanged.",
+          "status": "passed"
+        },
+        {
+          "id": "AC-8",
+          "description": "Snapshots cannot mutate the list and separate instances retain separate state.",
+          "status": "passed"
+        }
+      ],
+      "claimed": null,
+      "completion_claim_error": "expected exactly one HARNESS_RESULT claim",
+      "false_complete": false,
+      "evidence_kind": "independent_behavioral_checks",
+      "public_verification": "passed",
+      "turns": 4,
+      "model": "gemini-3.8-flash-high",
+      "session_mode": "process",
+      "response_contract_error": null,
+      "turn_summaries": [
+        {
+          "turn": 1,
+          "status": "SUCCESS",
+          "route": "IMPLEMENT",
+          "duration_seconds": 815.31,
+          "usage": {
+            "input_tokens": 608607,
+            "output_tokens": 42716,
+            "thinking_tokens": 25254,
+            "cache_read_tokens": 5819898,
+            "total_tokens": 651323
+          }
+        },
+        {
+          "turn": 2,
+          "status": "SUCCESS",
+          "route": "IMPLEMENT",
+          "duration_seconds": 382.97,
+          "usage": {
+            "input_tokens": 992610,
+            "output_tokens": 62117,
+            "thinking_tokens": 32338,
+            "cache_read_tokens": 9104519,
+            "total_tokens": 1054727
+          }
+        },
+        {
+          "turn": 3,
+          "status": "SUCCESS",
+          "route": "IMPLEMENT",
+          "duration_seconds": 385.701,
+          "usage": {
+            "input_tokens": 1456621,
+            "output_tokens": 80354,
+            "thinking_tokens": 36991,
+            "cache_read_tokens": 13995229,
+            "total_tokens": 1536975
+          }
+        },
+        {
+          "turn": 4,
+          "status": "SUCCESS",
+          "route": "IMPLEMENT",
+          "duration_seconds": 599.917,
+          "usage": {
+            "input_tokens": 2097484,
+            "output_tokens": 115929,
+            "thinking_tokens": 51205,
+            "cache_read_tokens": 19327057,
+            "total_tokens": 2213413
+          }
+        }
+      ],
+      "scope_error": null,
+      "success": false,
+      "wall_duration_seconds": 2184.796,
+      "installed_behavior_sha256": "49faa00a7074fd4628557dbb5ee4f5a76d3ca45de9fc8aa1779bf19c39941ab5",
+      "per_turn_deadline_seconds": 1800
+    },
+    "same_conversation_validated": true,
+    "workflow_reminders": 0,
+    "automatic_continuations": 0,
+    "final_cli_usage_cumulative": {
+      "input_tokens": 2097484,
+      "output_tokens": 115929,
+      "thinking_tokens": 51205,
+      "cache_read_tokens": 19327057,
+      "total_tokens": 2213413
+    },
+    "wall_time_minutes": 36.413,
+    "overall_success": false,
+    "note": "Behavior 8/8 and public tests pass, but multiple HARNESS_RESULT claims in aggregated CLI response fail the strict completion contract. Raw response was not retained; the cause of duplication is unproven. No post-parser-fix four-turn rerun."
+  },
+  "simulated_mcp_selection": {
+    "result": {
+      "event": "quality_score",
+      "case": "mcp-adaptive-selection-simulated",
+      "route": "REVIEW_ONLY",
+      "passed": 5,
+      "total": 5,
+      "coverage": 1.0,
+      "criteria": [
+        {
+          "id": "local_symbol",
+          "description": "Select an available tool appropriate for local symbol.",
+          "status": "passed"
+        },
+        {
+          "id": "framework_api",
+          "description": "Select an available tool appropriate for framework api.",
+          "status": "passed"
+        },
+        {
+          "id": "production_error",
+          "description": "Select an available tool appropriate for production error.",
+          "status": "passed"
+        },
+        {
+          "id": "rendered_page",
+          "description": "Select an available tool appropriate for rendered page.",
+          "status": "passed"
+        },
+        {
+          "id": "sentry_unavailable",
+          "description": "Select an available tool appropriate for sentry unavailable.",
+          "status": "passed"
+        }
+      ],
+      "claimed": null,
+      "completion_claim_error": null,
+      "false_complete": false,
+      "evidence_kind": "simulated_selection",
+      "public_verification": "not_required",
+      "turns": 1,
+      "model": "gemini-3.8-flash-high",
+      "session_mode": "process",
+      "response_contract_error": null,
+      "turn_summaries": [
+        {
+          "turn": 1,
+          "status": "SUCCESS",
+          "route": "REVIEW_ONLY",
+          "duration_seconds": 41.991,
+          "usage": {
+            "input_tokens": 18072,
+            "output_tokens": 5623,
+            "thinking_tokens": 5483,
+            "cache_read_tokens": 0,
+            "total_tokens": 23695
+          }
+        }
+      ],
+      "scope_error": null,
+      "success": true,
+      "wall_duration_seconds": 42.453,
+      "installed_behavior_sha256": "49faa00a7074fd4628557dbb5ee4f5a76d3ca45de9fc8aa1779bf19c39941ab5"
+    },
+    "services_contacted": false,
+    "note": "Selection only; does not demonstrate execution."
+  },
+  "autonomous_browser_probes": [
+    {
+      "model": "gemini-3.8-flash-high",
+      "installed_behavior_sha256": "49faa00a7074fd4628557dbb5ee4f5a76d3ca45de9fc8aa1779bf19c39941ab5",
+      "operator_tool_hints": 0,
+      "manual_mcp_approvals": 0,
+      "manual_file_approvals": 0,
+      "schema_discovery_observed": true,
+      "native_mcp_attempts": 1,
+      "native_browser_fallback_attempts": 1,
+      "dispatch_errors": [
+        "unknown tool: \"call_mcp_tool\"",
+        "unknown tool: \"browser_navigate\""
+      ],
+      "browser_page_hits": 0,
+      "browser_confirmation_hits": 0,
+      "final_reported_blocked": true,
+      "initial_text_verified": false,
+      "confirmation_verified": false,
+      "behavior_passed": false,
+      "permission_bypass_observed": false,
+      "source_or_api_substitution_observed": false,
+      "observation_wall_seconds": 394,
+      "latency_comparable": false,
+      "latency_note": "Includes operator observation after completion; exclude from runtime comparison.",
+      "workspace_isolated_from_harness_repo": true,
+      "verification_gate_sha256": "d88a778c7d866fbbe34da732e15eaa55089f4124f7569352c64554312af45cdd"
+    },
+    {
+      "model": "gemini-3.8-flash-high",
+      "installed_behavior_sha256": "49faa00a7074fd4628557dbb5ee4f5a76d3ca45de9fc8aa1779bf19c39941ab5",
+      "operator_tool_hints": 0,
+      "manual_mcp_approvals": 0,
+      "manual_file_approvals": 0,
+      "schema_discovery_observed": false,
+      "native_mcp_attempts": 0,
+      "browser_page_hits": 0,
+      "browser_confirmation_hits": 0,
+      "final_reported_blocked": true,
+      "reported_reason": "no native MCP invoker available for interactive browser testing",
+      "inventory_absence_independently_proven": false,
+      "initial_text_verified": false,
+      "confirmation_verified": false,
+      "behavior_passed": false,
+      "permission_bypass_observed": false,
+      "source_or_api_substitution_observed": false,
+      "observation_wall_seconds": 274,
+      "latency_comparable": false,
+      "latency_note": "Includes operator observation after completion; exclude from runtime comparison.",
+      "workspace_isolated_from_harness_repo": true,
+      "verification_gate_sha256": "d88a778c7d866fbbe34da732e15eaa55089f4124f7569352c64554312af45cdd"
+    },
+    {
+      "model": "gemini-3.8-flash-high",
+      "installed_behavior_sha256": "49faa00a7074fd4628557dbb5ee4f5a76d3ca45de9fc8aa1779bf19c39941ab5",
+      "verification_gate_sha256": "f79e28aaaaaeced2d32dd92044a02d7090b8decdf90b2b291e37c20215900dd8",
+      "input_mode": "interactive_idle_then_prompt",
+      "startup_idle_seconds": 30,
+      "operator_tool_hints": 0,
+      "manual_file_approvals": 0,
+      "manual_mcp_approvals": 0,
+      "mcp_permission_card_observed": false,
+      "schema_discovery_observed": true,
+      "native_mcp_attempts_observed": 0,
+      "browser_page_hits": 0,
+      "browser_confirmation_hits": 0,
+      "initial_text_verified": false,
+      "confirmation_verified": false,
+      "behavior_passed": false,
+      "final_reported_blocked": null,
+      "terminal_completion_independently_confirmed": false,
+      "operator_closed_after_quiescent_output": true,
+      "observation_wall_seconds": 276.563,
+      "latency_comparable": false,
+      "latency_note": "Observation includes operator waiting; task completion was not independently confirmed, and the operator closed the quiescent CLI. Excluded from latency comparison.",
+      "permission_bypass_observed": false,
+      "source_or_api_substitution_observed": false,
+      "workspace_isolated_from_harness_repo": true,
+      "note": "Metadata discovery observed without hints, but no tool dispatch, Ask card, or browser hit. Waiting before prompt did not demonstrate recovery; invoker timing is not established as the cause."
+    }
+  ],
+  "aggregation_diagnostic": {
+    "event": "aggregation_diagnostic",
+    "model": "gemini-3.8-flash-high",
+    "transport": "process_output_stream_json",
+    "print_deadline_seconds": 120,
+    "outer_deadline_seconds": 180,
+    "steps": [
+      {
+        "step_index": 0,
+        "step_type": "user_input",
+        "contains_draft_sentinel": false,
+        "contains_final_sentinel": false
+      },
+      {
+        "step_index": 1,
+        "step_type": "other",
+        "contains_draft_sentinel": false,
+        "contains_final_sentinel": false
+      },
+      {
+        "step_index": 2,
+        "step_type": "agent_response",
+        "contains_draft_sentinel": true,
+        "contains_final_sentinel": false
+      },
+      {
+        "step_index": 3,
+        "step_type": "other",
+        "contains_draft_sentinel": false,
+        "contains_final_sentinel": false
+      },
+      {
+        "step_index": 4,
+        "step_type": "agent_response",
+        "contains_draft_sentinel": false,
+        "contains_final_sentinel": true
+      }
+    ],
+    "terminal_results": [
+      {
+        "status": "SUCCESS",
+        "contains_draft_sentinel": true,
+        "contains_final_sentinel": true
+      }
+    ],
+    "init_events": 1,
+    "malformed_events": 0,
+    "other_events": 0,
+    "timed_out": false,
+    "aggregation_proven": true,
+    "exit_code": 0,
+    "hook_calls": 2,
+    "hook_continues": 1,
+    "separate_ordered_response_steps": true,
+    "interpretation": "aggregation_proven_for_this_probe",
+    "wall_duration_seconds": 18.66,
+    "verification_gate_sha256": "f79e28aaaaaeced2d32dd92044a02d7090b8decdf90b2b291e37c20215900dd8",
+    "note": "Synthetic public Stop continuation proves aggregation for this probe only. It does not establish the cause of duplicate completion claims in the four-turn run and does not rescore it."
+  },
+  "local_hook_timing": {
+    "kind": "local_hook_timing_diagnostic",
+    "installed_behavior_sha256": "49faa00a7074fd4628557dbb5ee4f5a76d3ca45de9fc8aa1779bf19c39941ab5",
+    "samples": 5,
+    "duration_milliseconds": [
+      89.463,
+      84.085,
+      71.446,
+      75.203,
+      66.977
+    ],
+    "median_milliseconds": 75.203,
+    "context_returned": true,
+    "injected_message_bytes": [
+      1019,
+      1019,
+      1019,
+      1019,
+      1019
+    ],
+    "model_calls": 0,
+    "baseline_available": false,
+    "note": "Measures local installed PreInvocation launch only, not model latency or a speedup."
+  },
+  "verification": {
+    "python_tests": 273,
+    "python_skipped": 3,
+    "python_skip_reason": "Windows-only cases",
+    "node_tests": 15,
+    "all_required_source_checks_passed": true,
+    "installer_exit_code": 0,
+    "source_matches_installed": true,
+    "global_managed_policy_matches": true,
+    "parser_regression_tests": 2,
+    "related_tests_passed": 104,
+    "post_fix_four_turn_eval_run": false
+  },
+  "comparison": {
+    "latency_improvement_demonstrated": false,
+    "multiturn_total_token_change_percent": 47.1,
+    "multiturn_behavior_retained": true,
+    "multiturn_overall_success": false,
+    "autonomous_real_mcp_success_demonstrated": false
+  },
+  "limitations": [
+    "One completed four-turn sample per revision; baseline wall-clock is approximate.",
+    "CLI version, policy/context and per-turn deadline differ; frozen deadline 1800 seconds versus 900 seconds for an incomplete intermediate diagnostic.",
+    "The behavior digest excludes runtime Python; old and final verification-gate hashes are recorded separately.",
+    "Final parser fix has source/regression verification, but no post-fix four-turn live rerun.",
+    "Process JSON aggregates responses; separate synthetic diagnostic proves aggregation, without attributing the historical duplicate claim.",
+    "Optional stream runs failed before a scored completion and were not counted as successful runs.",
+    "Browser probes use an isolated workspace outside this harness repository; their observations are not substituted for the four-turn benchmark.",
+    "Browser observation durations include operator waiting and are excluded from latency comparisons.",
+    "Configured server inventory and separate health/init checks do not prove tool availability or task success in the browser invocation.",
+    "Simulated MCP selection does not prove execution or real service fallback.",
+    "Usage counters are cumulative; only final-turn usage is compared. Cache is not added to total; no cost estimate is made."
+  ],
+  "intermediate_diagnostics": [
+    {
+      "kind": "stream_transport",
+      "scored_completion": false,
+      "terminal_status": "ERROR",
+      "note": "Strict protocol validation retained; failures not scored as success."
+    },
+    {
+      "kind": "900_second_process_run",
+      "scored_completion": false,
+      "note": "No completed turn summary; exception type not retained. Cause unproven."
+    },
+    {
+      "kind": "OS_sandbox_startup_failure",
+      "duration_seconds": 0.176,
+      "scored_completion": false,
+      "note": "Not a task latency measurement."
+    },
+    {
+      "kind": "browser_discovery_drift",
+      "scored_completion": false,
+      "repository_file_explorations_at_least": 21,
+      "one_time_public_file_approvals": 9,
+      "browser_hits": 0,
+      "operator_stopped": true,
+      "latency_comparable": false
+    },
+    {
+      "kind": "browser_permission_view_interruption",
+      "scored_completion": false,
+      "operator_interrupted_while_viewing_permission": true,
+      "public_readme_file_approvals": 2,
+      "mcp_approvals": 0,
+      "latency_comparable": false
+    }
+  ]
+}

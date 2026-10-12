@@ -56,14 +56,16 @@ Beyond the terms issue, the harnesses do not use the same wire protocol:
 
 Localized, low-risk changes use the `IMPLEMENT` route. Its conservative inline fast path lets the main agent directly perform a single-acceptance, deterministic change to one existing file and one contiguous hunk of at most 10 changed lines, then review the exact diff and run one narrow check. It does not invoke implementer or verifier subagents. The fast path excludes multi-constraint work, dirty overlap, external operations, generated/vendor/lock files, and public API/CLI/schema/config/install/CI/build/dependency/auth/security/persistence/migration/concurrency/permissions/secrets/legal/operator-workflow impact. Static prose, comments, and documentation use a static check; executable source still requires an existing focused behavioral check. Any uncertainty, scope growth, excluded concern, or missing/failed/inconclusive check promotes the work before another write.
 
-Other localized implementation uses the implementer and the verifier for material behavior. Changes involving a public contract, auth/permissions, persistence, migration, concurrency, security, dependency/platform migration, or multiple interdependent components use `COMPLEX_IMPLEMENT`:
+Other localized implementation starts an independent read-only verifier for scope review; implementation waits for that scope to pass. After the implementer and main's final focused check bundle, main resumes the same known verifier conversation for a fresh delivery assessment using the current revision, full active ACs, final diff and observed checks. A scope summary is never delivery proof; the verifier remains independent from implementation. Reuse uses `send_message` only with that existing conversation, never agent searches or inferred identities. New scope, relevant writes or failures require renewed checks/review. Changes involving breaking/consumer-facing public contracts, auth/permissions, persistence, migration, concurrency, security, dependency/platform migration, or multiple interdependent components retain the named reviewer and verifier and use `COMPLEX_IMPLEMENT`:
 
 ```text
 research + plan
       ↓
+independent full-request scope review
+      ↓
 implement
       ↓
-independent review + verification
+independent per-AC delivery review + verification
       ↓
 fix findings (if any) + final verification
 ```
@@ -80,7 +82,11 @@ promotes the route before reporting. Concrete code defects, runtime
 behavior, reproduction, security behavior and changed-code review remain
 `REVIEW_VERIFY`, preserving an independent verifier.
 
-Complex or multi-constraint work starts with a compact acceptance ledger. Stable IDs (`AC-1`, `AC-2`, ...) bind each observable requirement to intended evidence and a verification check; the implementer, reviewer, verifier, and final handoff preserve those IDs. Bug fixes use falsification where practical: capture a focused test or safe reproduction that fails for the expected reason before product edits, then rerun the same command unchanged after the fix. If that red state is unsafe or infeasible, the agent records the reason and uses the strongest feasible alternative. Source paths and symbols must be verified before citation, and non-established claims are labeled `[HYPOTHESIS]`, `[ASSUMPTION]`, or `[UNRESOLVED]`.
+Outside the inline fast path, implementation starts with a version-2 `harness-task-contract.json` artifact carrying a stable taskId, sequential revision and the full active acceptance inventory. Stable IDs (`AC-1`, `AC-2`, ...) bind exact user excerpts and observed originating sourceStep values to observable acceptance and static or behavioral verification. Cumulative task intent survives follow-ups, status questions and transcript compaction. Unchanged rows carry forward intact; revised/dropped old IDs require explicit later user scopeChanges, retired IDs cannot be reused, and explicit replacement requires replacesTask. Missing criteria may be appended in the same turn only before the first task product write. Disclose inaccessible prior context rather than silently dropping it. Version 1 remains a legacy protocol and cannot downgrade an active v2 task.
+
+Before writes, an independent reviewer compares the entire cumulative request, constraints and error paths with the full inventory. Main persists its matching `phase: scope` report as `harness-acceptance-review.json`. After the final product write, independent reviewer/verifier assess delivery per AC against actual behavior and relevant check evidence; main replaces that artifact with the matching `phase: delivery` report. Each active AC has a status, observed evidenceSteps and a nonempty relevance/gap reason. Resolve omissions before implementation and renew scope review after revisions; fixes require rerunning affected checks and renewing delivery review on the final state. A broad suite counts for several ACs only when it actually exercises each one.
+
+The implementer, reviewer, verifier and final handoff preserve the full inventory. No omitted requirement, invented business rule, silent material default, stub, mock or weakened test counts as delivered behavior. Assumptions cannot establish acceptance; missing material rules follow the clarification flow. The [task completion protocol](task-completion.md) documents exact formats and limits. Bug fixes use falsification where practical: capture a focused test or safe reproduction that fails for the expected reason before product edits, then rerun the same command unchanged after the fix. If that red state is unsafe or infeasible, record why and use the strongest feasible alternative. Verify source paths and symbols before citation; label non-established claims `[HYPOTHESIS]`, `[ASSUMPTION]`, or `[UNRESOLVED]`.
 
 ## Material clarification flow
 
@@ -109,7 +115,11 @@ The same Stop hook performs bounded, best-effort citation grounding from the cur
 
 An invalid local citation causes one generic correction reminder for that user turn, then fails open to prevent a Stop loop. This is structural path-and-line grounding, not semantic entailment: it cannot prove that prose truthfully describes the cited lines and does not catch an uncited hallucination. Workflow requirements, independent review, behavioral verification, and hallucination-trap evals therefore remain separate controls.
 
-When no behavioral or static check can run, the agent may explicitly print `HARNESS_NO_RUNNABLE_CHECK: <specific reason>` with a successful, non-redirected print command. This records a waiver, not a passing check, and the limitation must be reported in the final response. Without current evidence or a valid waiver, the gate requests verification once and then allows the next normal idle stop to prevent an infinite loop. Internal hook/state failures likewise fail open after at most one recovery reminder rather than locking the session. The hooks require Python 3.8+; when the runtime is unavailable, DLP falls back to `force_ask`, while context, formatting, and verification retain their documented safe fallback behavior.
+For a registered contract on a compatible completed-response transcript, the Stop hook requires one single-line `HARNESS_RESULT:` JSON object with every active criterion and its result, plus matching taskId/revision for version 2. A passed criterion must reference observed successful check steps after registration and the final workspace write; behavioral criteria require behavioral evidence. Version-2 `complete` additionally requires matching scope/delivery reports, complete active-ID coverage and consistent evidence. Failed checks persist across active-task turns until successful reruns clear them. Honest `partial` and `blocked` results may omit reviews for unfinished rows only; passed rows still require current delivery relevance review. The final scope report is required for complete, not a passed subset of a partial result. Include every active AC, reasons for unfinished rows and exact counts; retain the active task for follow-up. Invalid completion results continue to require correction rather than becoming accepted after one reminder. Main reruns relevant checks when subagent evidence is absent from its hook state.
+
+When no behavioral or static check can run, the agent may explicitly print `HARNESS_NO_RUNNABLE_CHECK: <specific reason>` with a successful, non-redirected print command. This records a waiver, not a passing check; a registered criterion remains unverified and the final status cannot be complete. The older verification reminder remains bounded outside the registered completion protocol. Unknown or truncated transcript schemas, unavailable state, and runtime failures may fail open: this hook is a workflow control within the supported first-party client, not a security boundary against an agent that deliberately evades registration. The hooks require Python 3.8+; when the runtime is unavailable, DLP falls back to `force_ask`, while context, formatting, and verification retain their documented fallback behavior.
+
+Mechanical validation does not prove that the contract covers cumulative natural-language intent, a business rule is correct, a review is independent, or a passing command tests the claimed requirement. Independent review and verification must assess those links and report uncertainty, including inaccessible prior context and fallback limits. A fabricated review artifact can still be mechanically well-formed. The source implementation and deterministic fixtures do not establish that an already installed Antigravity session is running the updated hook.
 
 The workflow treats the final workspace write as opening verification debt and
 runs the smallest appropriate check before composing the handoff. An eligible
@@ -123,6 +133,48 @@ tiers do not expose a per-agent reasoning-effort field.
 Smoke evals exercise both sides of the evidence contract. A read-only nonexistent-symbol case requires an exact `NOT_FOUND` result and forbids claims of a definition, location, or file mutation. The complex fixture declares independently named acceptance criteria and runs each targeted check as well as the full suite. These are behavioral signals; the headless JSON envelope still cannot prove exact subagent scheduling order.
 
 `plugin/codex-claude-harness/mcp_config.json` is the canonical safety-pinned input for Context7, Serena, Playwright, GitHub, and Sentry. The installer renders the enabled, available subset into the installed plugin, so Antigravity loads that effective inventory at the start of a session and the model decides which server is worth calling. Server names use the `harness-` prefix to prevent collisions with global or workspace configuration. The `disabled` templates in the skill are reference and rollback copies only; they are no longer a manual installation step.
+
+At task time, select from available authorized capabilities; the bundled list is not a closed inventory. Chain dependent read results, switch tools/servers when evidence is inadequate, and batch bounded independent read-only queries when useful. There is no fixed server/query quota or ceremonial smoke query. Inspect returned project/version/scope, prefer reliable local evidence, and disclose safe fallback limits without installing servers, expanding access or bypassing Ask permissions. MCP is useful for discovery, corroboration and browser exploration; the current command-observing completion gate does not automatically treat MCP/manual results as successful behavioral checks. Unsupported acceptance evidence remains unverified rather than receiving invented check IDs.
+
+First-invocation context also emits allowlisted configured MCP identities and
+capabilities from the installed plugin, including in unrecognized projects.
+Native inventory and deferred tool schemas remain authoritative; configured
+hints cannot grant access. The hook never copies executable definitions or auth
+fields. Tool discovery does not inspect private global configuration. Denied
+permissions stop the dependent action without retries or alternate execution.
+
+Main owns MCP discovery/execution unless the worker's exposed inventory confirms
+the required native MCP tools. Workers do not automatically inherit main's tool
+access. Required independent scope/review branches still assess the full contract
+and observed results; browser execution stays with main when the worker lacks
+browser tools. A worker with missing tools returns blocked promptly. Reading
+source or fetching static HTML cannot replace required rendered interaction.
+Calls from main retain the same Ask permissions; an actual denial still ends the
+dependent action, and handing it to another agent is not a permission workaround.
+
+Discovery ends once the exact matching schema, valid arguments and native MCP
+invoker are available for the authorized next action. The agent then invokes the
+native tool; actual native inventory/call results and the normal Ask prompt
+establish current availability. Reading repository README/docs/tests cannot
+establish a live connection and must not become a repeated discovery loop unless
+configuration diagnosis is the task. Source reads needed for actual acceptance
+criteria still apply. An absent native invoker is reported blocked without an
+alternate client; schema discovery alone never proves successful execution.
+
+Routing is owned by the main agent. Bounded leaf workers execute their assigned
+role directly and receive the full active AC inventory plus the relevant delta,
+diff and observed evidence. A parent-owned final focused check bundle can serve
+independent delivery assessments without ceremonial duplicate execution. New
+writes, failures, missing evidence or justified falsification still require
+appropriate checks; cumulative coverage and gate freshness are unchanged.
+
+Normal `IMPLEMENT` is allowed for fully specified new or unfinished isolated
+local APIs only after inspecting the absence of integration consumers and
+material compatibility, external-state, security, dependency, concurrency or
+migration risk. Breaking/consumer-facing interfaces or uncertain impact still
+require `COMPLEX_IMPLEMENT`. This avoids expensive orchestration for an isolated
+unfinished module while retaining its full contract and independent checks;
+inline eligibility is unchanged.
 
 Context7 and Playwright use packages pinned through `npx`; Serena uses a package pinned through `uvx`; GitHub uses a release binary pinned by version and verified by OS/architecture-specific checksums; and Sentry uses its official remote endpoint with the `skills=inspect` capability allowlist. GitHub exposes only read-only/lockdown mode; Serena disables mutation tools; and Sentry additionally disables `update_issue`, Seer analysis, and the catalog executor as defense in depth so catalog mutations cannot bypass the wrapper. MCP permissions remain set to Ask. The harness adds no wildcard allow rule, embeds no credentials, and leaves the user to complete the provider's standard OAuth flow when required.
 

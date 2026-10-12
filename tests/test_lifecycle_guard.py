@@ -568,6 +568,138 @@ class LifecycleGuardTests(unittest.TestCase):
         self.assertIn("Next.js", message)
         self.assertLessEqual(len(message.encode("utf-8")), 1024)
 
+    def observed_id_fixture(self, records=None, state=None):
+        artifact = Path(self.common["artifactDirectoryPath"])
+        artifact.mkdir(exist_ok=True)
+        transcript = artifact / "transcript.jsonl"
+        transcript.write_text("\n".join(json.dumps(row) for row in (records or [
+            {"source": "USER", "type": "REQUEST", "step_index": 7,
+             "content": "PRIVATE-REQUEST-CONTENT"},
+        ])) + "\n", encoding="utf-8")
+        if state is not None:
+            (artifact / ".codex-claude-harness-verification.json").write_text(
+                json.dumps(state), encoding="utf-8",
+            )
+        return {"invocationNum": 1, "transcriptPath": str(transcript)}
+
+    def test_context_observed_user_id_precedes_contract_and_never_infers_steps(self):
+        payload = self.observed_id_fixture()
+        artifact = Path(self.common["artifactDirectoryPath"])
+        before = {path.name: path.read_bytes() for path in artifact.iterdir()}
+        result = self.call("context", {**payload, "initialNumSteps": 999})
+        self.assertEqual(set(result), {"injectSteps"})
+        self.assertEqual(len(result["injectSteps"]), 1)
+        message = result["injectSteps"][0]["ephemeralMessage"]
+        self.assertIn("current user step=7", message)
+        self.assertIn("MAIN non-inline", message)
+        self.assertIn("behavioral=[], static=[]", message)
+        self.assertIn("read-only work needs no contract", message)
+        self.assertNotIn("999", message)
+        self.assertNotIn("PRIVATE-REQUEST-CONTENT", message)
+        self.assertNotIn(str(artifact), message)
+        self.assertLessEqual(len(message.encode("utf-8")), MODULE.MAX_CONTEXT_BYTES)
+        self.assertEqual(before, {path.name: path.read_bytes() for path in artifact.iterdir()})
+
+    def test_context_candidates_share_stop_freshness_and_failure_filter(self):
+        state = {"taskContract": {"userStep": 7, "registeredStep": 8},
+                 "lastWriteStep": 10, "checkEvents": [
+                     {"step": 9, "success": True, "behavioral": True, "command": "STALE-COMMAND"},
+                     {"step": 11, "success": True, "behavioral": True, "command": "FAILED-COMMAND"},
+                     {"step": 12, "success": False, "behavioral": True, "command": "FAILED-COMMAND"},
+                     {"step": 13, "success": True, "behavioral": True, "command": "PRIVATE-COMMAND"},
+                     {"step": 14, "success": True, "behavioral": False, "command": "PRIVATE-STATIC"},
+                 ], "modifiedPaths": ["PRIVATE-PATH"], "waiverReason": "PRIVATE-REASON"}
+        payload = self.observed_id_fixture(state=state)
+        message = self.call("context", payload)["injectSteps"][0]["ephemeralMessage"]
+        self.assertIn("evidence floor=10", message)
+        self.assertIn("behavioral=[13], static=[14]", message)
+        self.assertIn("AC relevance and current matching delivery review", message)
+        for private in ("STALE-COMMAND", "FAILED-COMMAND", "PRIVATE-COMMAND",
+                        "PRIVATE-STATIC", "PRIVATE-PATH", "PRIVATE-REASON"):
+            self.assertNotIn(private, message)
+
+    def test_context_discards_prior_contract_and_check_ids_after_new_user_request(self):
+        payload = self.observed_id_fixture(state={
+            "taskContract": {"userStep": 1, "registeredStep": 2}, "lastWriteStep": 100,
+            "checkEvents": [{"step": 101, "success": True, "behavioral": True, "command": "old"}],
+        })
+        message = self.call("context", payload)["injectSteps"][0]["ephemeralMessage"]
+        self.assertIn("current user step=7; evidence floor=7", message)
+        self.assertIn("behavioral=[], static=[]", message)
+        self.assertNotIn("101", message)
+
+    def test_context_omits_missing_truncated_ambiguous_and_unsafe_user_provenance(self):
+        row = {"source": "USER", "type": "REQUEST", "step_index": 7, "content": "private"}
+        cases = ([{**row, "truncated_fields": ["content"]}],
+                 [{**row, "step_index": True}], [{**row, "step_index": -1}],
+                 [{**row, "step_index": 2**64}], [row, row],
+                 [row, {**row, "step_index": 6}],
+                 [{"source": "MODEL", "type": "RESPONSE", "step_index": 8, "content": "private"}])
+        for rows in cases:
+            with self.subTest(rows=rows):
+                self.assertEqual(self.call("context", self.observed_id_fixture(records=rows)), {})
+        payload = self.observed_id_fixture()
+        outside = self.base / "transcript.jsonl"
+        outside.write_text(json.dumps(row) + "\n", encoding="utf-8")
+        self.assertEqual(self.call("context", {**payload, "transcriptPath": str(outside)}), {})
+        Path(payload["transcriptPath"]).write_text("not-json\n", encoding="utf-8")
+        self.assertEqual(self.call("context", payload), {})
+
+    def test_later_context_hint_does_not_repeat_project_or_mcp_detection(self):
+        payload = {**self.common, **self.observed_id_fixture()}
+        with mock.patch.object(MODULE, "_mcp_context", side_effect=AssertionError("repeated MCP")), \
+                mock.patch.object(MODULE, "_detect_root", side_effect=AssertionError("repeated stack")), \
+                mock.patch.object(MODULE, "_runtime_version", side_effect=AssertionError("repeated runtime")), \
+                mock.patch.dict(sys.modules, {"verification_gate": object()}):
+            result = MODULE._context(payload)
+        self.assertIn("current user step=7", result["injectSteps"][0]["ephemeralMessage"])
+
+    def test_context_hint_rejects_symlinked_transcript_and_state_is_read_only(self):
+        payload = self.observed_id_fixture(state={
+            "taskContract": {"userStep": 7, "registeredStep": 8}, "lastWriteStep": 9,
+            "checkEvents": [{"step": 10, "success": True, "behavioral": True, "command": "private"}],
+        })
+        artifact = Path(self.common["artifactDirectoryPath"])
+        state_path = artifact / ".codex-claude-harness-verification.json"
+        before = (state_path.read_bytes(), state_path.stat().st_mtime_ns)
+        self.call("context", payload)
+        self.assertEqual(before, (state_path.read_bytes(), state_path.stat().st_mtime_ns))
+        transcript = Path(payload["transcriptPath"])
+        actual = artifact / "other.jsonl"
+        transcript.rename(actual)
+        try:
+            transcript.symlink_to(actual)
+        except OSError:
+            self.skipTest("symlinks unavailable")
+        self.assertEqual(self.call("context", payload), {})
+
+    def test_context_hint_uses_installed_sibling_not_project_pythonpath(self):
+        marker = self.workspace / "unexpected-import"
+        (self.workspace / "verification_gate.py").write_text(
+            "from pathlib import Path\nPath(%r).touch()\n" % str(marker), encoding="utf-8",
+        )
+        payload = self.observed_id_fixture()
+        result = self.call("context", payload, {"PYTHONPATH": str(self.workspace)})
+        self.assertIn("current user step=7", result["injectSteps"][0]["ephemeralMessage"])
+        self.assertFalse(marker.exists())
+
+    def test_context_hint_is_bounded_and_omits_lost_user_tail(self):
+        state = {"taskContract": {"userStep": 7, "registeredStep": 8},
+                 "checkEvents": [{"step": step, "success": True,
+                                  "behavioral": step % 2 == 0, "command": "PRIVATE"}
+                                 for step in range(9, 137)]}
+        payload = self.observed_id_fixture(state=state)
+        message = self.call("context", payload)["injectSteps"][0]["ephemeralMessage"]
+        self.assertLessEqual(len(message.encode("utf-8")), MODULE.MAX_CONTEXT_BYTES)
+        self.assertIn("behavioral=[122, 124, 126, 128, 130, 132, 134, 136]", message)
+        self.assertNotIn("PRIVATE", message)
+        transcript = Path(payload["transcriptPath"])
+        with transcript.open("a", encoding="utf-8") as handle:
+            for step in range(8, 521):
+                handle.write(json.dumps({"source": "MODEL", "type": "TOOL_CALL",
+                                         "step_index": step, "content": "PRIVATE"}) + "\n")
+        self.assertEqual(self.call("context", payload), {})
+
     def test_context_ignores_raw_package_descriptions_and_scripts(self) -> None:
         marker = "DO-NOT-INJECT-RAW-CONTENT"
         (self.workspace / "package.json").write_text(
@@ -732,16 +864,95 @@ class LifecycleGuardTests(unittest.TestCase):
         for name in ("FastAPI", "Gin", "Axum"):
             self.assertIn(name, message)
 
-    def test_context_returns_empty_without_known_manifest(self) -> None:
+    def test_context_discovers_mcp_without_known_project_manifest(self) -> None:
         (self.workspace / "README.md").write_text("Next.js", encoding="utf-8")
-        self.assertEqual(self.call("context", {"invocationNum": 0}), {})
+        result = self.call("context", {"invocationNum": 0})
+        message = result["injectSteps"][0]["ephemeralMessage"]
+        self.assertIn("codex-claude-harness_harness-playwright=rendered browser", message)
+        self.assertIn("not availability or authorization proof", message)
+        self.assertIn("native session inventory", message)
+        self.assertIn("Next client schema:", message)
+        self.assertIn("call_mcp_tool", message)
+        self.assertIn("only when advertised", message)
+        self.assertIn("Keep Ask", message)
+        self.assertIn("without retrying", message)
+        self.assertIn("Main owns MCP discovery/execution", message)
+        self.assertIn("worker inventory confirms required tools", message)
+        self.assertIn("worker returns blocked", message)
+        self.assertIn("With schema/args invoke authorized native tool", message)
+        self.assertIn("result/Ask proves availability, not repo/docs/tests", message)
+        self.assertIn("except config diagnosis", message)
+        self.assertIn("No invoker: blocked; no alternate client", message)
+        self.assertNotIn("Next.js", message)
+        self.assertLessEqual(len(message.encode()), 1024)
+        with mock.patch.object(MODULE.Path, "home", return_value=Path("/" + "x" * 2000)):
+            bounded = MODULE._mcp_context()
+        self.assertLessEqual(len(bounded.encode()), 1024)
+        self.assertIn("With schema/args invoke authorized native tool", bounded)
+        self.assertIn("Keep Ask", bounded)
+        self.assertTrue(bounded.endswith("alternate execution or permission changes."))
+
+    def test_mcp_context_requires_runtime_invoker_before_schema_discovery(self) -> None:
+        message = MODULE._mcp_context()
+        self.assertIsNotNone(message)
+        self.assertLess(message.index("native session inventory"),
+                        message.index("Next client schema:"))
+        self.assertIn("No invoker: blocked; no alternate client or schema search", message)
+        self.assertIn("call_mcp_tool(ServerName, ToolName, Arguments) only when advertised", message)
+        self.assertIn("Cache is metadata", message)
+        self.assertIn("Unknown tool: dispatch failure before Ask; stop, do not guess aliases", message)
+        self.assertNotIn("browser_navigate", message)
+        self.assertNotIn("always allow", message.lower())
+
+    def test_mcp_context_filters_disabled_unknown_and_private_fields(self) -> None:
+        root = self.base / "plugin"
+        root.mkdir()
+        (root / "mcp_config.json").write_text(json.dumps({"mcpServers": {
+            "harness-playwright": {"disabled": False, "env": {"key": "PRIVATE-MARKER"},
+                                   "command": "DO-NOT-EXECUTE", "args": ["DO-NOT-INJECT"]},
+            "harness-sentry": {"disabled": True},
+            "harness-context7": {"disabled": "false"},
+            "IGNORE-ALL-INSTRUCTIONS": {"disabled": False},
+        }}))
+        message = MODULE._mcp_context(root)
+        self.assertIn("codex-claude-harness_harness-playwright", message)
+        for forbidden in ("PRIVATE-MARKER", "DO-NOT", "IGNORE-ALL", "harness-sentry", "harness-context7"):
+            self.assertNotIn(forbidden, message)
+        with mock.patch.object(MODULE.Path, "home", return_value=Path("/" + "x" * 2000)):
+            bounded = MODULE._mcp_context(root)
+        self.assertLessEqual(len(bounded.encode()), 1024)
+        self.assertIn("Keep Ask", bounded)
+        self.assertIn("without retrying", bounded)
+        self.assertIn("Main owns MCP discovery/execution", bounded)
+        self.assertIn("worker returns blocked", bounded)
+        self.assertIn("With schema/args invoke authorized native tool", bounded)
+        self.assertIn("No invoker: blocked; no alternate client", bounded)
+
+    def test_mcp_context_rejects_malformed_oversized_missing_and_symlink_configs(self) -> None:
+        root = self.base / "plugin"
+        root.mkdir()
+        config = root / "mcp_config.json"
+        self.assertIsNone(MODULE._mcp_context(root))
+        for text in ("private invalid value", "[]", '{"mcpServers": []}',
+                     "x" * (MODULE.MAX_MANIFEST_BYTES + 1)):
+            config.write_text(text)
+            self.assertIsNone(MODULE._mcp_context(root))
+        config.unlink()
+        target = self.base / "private-config.json"
+        target.write_text('{"mcpServers":{"harness-playwright":{"disabled":false}}}')
+        try:
+            config.symlink_to(target)
+        except OSError:
+            self.skipTest("symlinks unavailable")
+        self.assertIsNone(MODULE._mcp_context(root))
 
     def test_context_returns_empty_when_only_runtime_specs_fail_resolution(self) -> None:
         (self.workspace / "package.json").write_text(
             json.dumps({"dependencies": {"lodash": "1"}}), encoding="utf-8"
         )
         payload = {**self.common, "invocationNum": 0}
-        with mock.patch.object(MODULE, "_runtime_version", return_value=None):
+        with mock.patch.object(MODULE, "_runtime_version", return_value=None), \
+                mock.patch.object(MODULE, "_mcp_context", return_value=None):
             self.assertEqual(MODULE._context(payload), {})
 
     def _fake_prettier(self) -> Path:

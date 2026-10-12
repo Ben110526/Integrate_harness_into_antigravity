@@ -110,13 +110,15 @@ The harness automatically determines task complexity and selects the optimal exe
 | `DIRECT` | Conceptual explanations, general questions without code edits | Direct immediate answer |
 | `LOCAL_LOOKUP` | Single file or symbol lookup | Up to 2 file reads, no subagent overhead |
 | `RESEARCH` | Multi-file architecture analysis, complex root-cause diagnosis | Activates independent `harness-researcher` |
-| `IMPLEMENT` | Localized, low-risk changes | Inline fast path (≤ 10 lines) or `harness-implementer` + `harness-verifier` |
-| `COMPLEX_IMPLEMENT` | Major features, public API changes, auth, migrations, concurrency, security | Researcher → Plan (AC IDs) → Implementer → Parallel Reviewer & Verifier |
+| `IMPLEMENT` | Localized, low-risk changes | Inline fast path (≤ 10 lines), or verifier scope review → main implementation → fresh verifier delivery review; implementer optional for a useful split or explicit request |
+| `COMPLEX_IMPLEMENT` | Major features, public API changes, auth, migrations, concurrency, security | Researcher → Plan (AC IDs) → Independent Scope Review → Implementer → Parallel Delivery Reviewer & Verifier |
 
 > [!NOTE]
 > **Code Review Routes:**
 > - `REVIEW_ONLY`: Conceptual or static analysis with independent `harness-reviewer` (no behavioral execution claims).
 > - `REVIEW_VERIFY`: Concrete bug diagnosis, runtime behavior, security audits, or modified-code reviews, pairing `harness-reviewer` with `harness-verifier`.
+
+Implementation outside the inline fast path keeps a version-2 acceptance contract across user turns, with a stable task ID and sequential revisions. Follow-ups refine the active task; progress questions and compaction do not erase earlier requirements. An independent scope review checks the full request before writes, and a delivery review explains the relevant evidence for each acceptance criterion after the final change. Explicit user scope changes or task replacement are recorded, and unfinished requirements remain visible: 2/4 passed means partial. See the [task completion protocol](docs/task-completion.md) for formats and enforcement limits; review independence and test relevance still require human or agent judgment.
 
 <details>
 <summary><b>⚡ Auto-Approving Allowed Commands (Terminal Permissions)</b></summary>
@@ -135,6 +137,9 @@ By default, Antigravity CLI may prompt for approval before executing certain ter
 
 #### Recommended Configuration:
 Add the allowlist rules under `permissions.allow`:
+
+The installer preserves existing permissions. Keep default Ask for Git mutations,
+external actions and MCP calls.
 
 ```json
 {
@@ -215,7 +220,7 @@ Add the allowlist rules under `permissions.allow`:
 - 🔒 **DLP PreToolUse**: Blocks leaks of private keys, tokens, and sensitive `.env` files before tool calls.
 - 🗺️ **Context PreInvocation**: Injects a compact, bounded architectural blueprint on the first turn.
 - 🎨 **Auto-Format PostToolUse**: Automatically formats edited files when enabled (`HARNESS_AUTO_FORMAT=1`).
-- 🚦 **Verification & Grounding Gate (Stop)**: Enforces post-write verification and validates cited file paths and line ranges.
+- 🚦 **Verification & Grounding Gate (Stop)**: Checks post-write evidence, cumulative task/review consistency and cited file paths/line ranges. It cannot prove semantic coverage or test relevance.
 
 ### 5 Bundled MCP Servers
 - 📚 `harness-context7`: Fetches version-matched documentation for standard libraries and frameworks.
@@ -223,6 +228,8 @@ Add the allowlist rules under `permissions.allow`:
 - 🌐 `harness-playwright`: Automated browser testing and UI exploration (loopback restricted by default).
 - 🐙 `harness-github`: Read-only access to Issues, Pull Requests, CI Actions, and security alerts.
 - 🚨 `harness-sentry`: Real-time production error, issue, and telemetry data inspection.
+
+The AI selects from available authorized capabilities, chains or switches tools when evidence warrants it, and can batch bounded independent read-only queries. There is no fixed server/query quota or mandatory smoke-call ceremony. Local evidence and safe fallbacks remain available; task-time use does not install servers or bypass permissions. MCP/manual results alone are not automatically completion-gate check evidence. See [adaptive MCP routing](docs/mcp-profiles.md#adaptive-use-during-a-task).
 
 ---
 

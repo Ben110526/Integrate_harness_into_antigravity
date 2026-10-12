@@ -193,5 +193,217 @@
         ]
       }
     ]
+  },
+  {
+    "id": "multiturn-waiting-list",
+    "requires_completion_claim": true,
+    "language": "python",
+    "route": "IMPLEMENT",
+    "allowed_routes": [
+      "IMPLEMENT",
+      "COMPLEX_IMPLEMENT"
+    ],
+    "fixture": "python-waiting-list",
+    "quality_eval": true,
+    "prompt": "Build the WaitingList service in the supplied module for event registrations. Capacity must be a positive integer. Joining returns a one-based position; trim names and reject blank or non-string names. Initially, duplicates should ignore letter case. A full list or invalid join must raise ValueError and leave the list unchanged. snapshot should return the waiting names in order without allowing callers to change the service through that returned value. Each instance needs its own waiting names.",
+    "turns": [
+      "Add cancellation and position lookup: cancel returns True if a matching name was removed and False otherwise; position returns the one-based position or None. Trim lookup names too. next should remove and return the earliest remaining name, or None when empty. Cancellations and serving the next person should free capacity for new arrivals.",
+      "Change the duplicate rule: matching must now be case-sensitive. Mai and mai are different people, but surrounding whitespace still does not distinguish names. Apply the same revised matching rule to joining, cancelling, and position lookup.",
+      "Also support join_many: accept a list of names and return their positions in order, with an empty list returning an empty list. It must be atomic: if any name is invalid, duplicated within the batch or already waiting, or the whole batch exceeds remaining capacity, raise ValueError and add nobody. The earlier behavior still needs to work."
+    ],
+    "expect_change": true,
+    "required_changed_paths": [
+      "waiting_list.py"
+    ],
+    "allowed_changed_paths": [
+      "waiting_list.py",
+      "test_waiting_list.py"
+    ],
+    "requires": [
+      "python3"
+    ],
+    "verify": [
+      "python3",
+      "-B",
+      "-m",
+      "unittest",
+      "-q",
+      "test_waiting_list"
+    ],
+    "acceptance_criteria": [
+      {
+        "id": "AC-1",
+        "description": "Positive integer capacity is enforced without mutating a full list.",
+        "verify": [
+          "python3",
+          "-I",
+          "-B",
+          "{evals}/acceptance/waiting_list_checks.py",
+          "{workspace}",
+          "AC-1"
+        ]
+      },
+      {
+        "id": "AC-2",
+        "description": "Names are trimmed; blank and non-string joins are rejected without mutation.",
+        "verify": [
+          "python3",
+          "-I",
+          "-B",
+          "{evals}/acceptance/waiting_list_checks.py",
+          "{workspace}",
+          "AC-2"
+        ]
+      },
+      {
+        "id": "AC-3",
+        "description": "The revised case-sensitive duplicate rule replaces the initial rule consistently.",
+        "verify": [
+          "python3",
+          "-I",
+          "-B",
+          "{evals}/acceptance/waiting_list_checks.py",
+          "{workspace}",
+          "AC-3"
+        ]
+      },
+      {
+        "id": "AC-4",
+        "description": "Cancellation, lookup positions, and FIFO service behave consistently.",
+        "verify": [
+          "python3",
+          "-I",
+          "-B",
+          "{evals}/acceptance/waiting_list_checks.py",
+          "{workspace}",
+          "AC-4"
+        ]
+      },
+      {
+        "id": "AC-5",
+        "description": "Cancellation and service free capacity for later joins.",
+        "verify": [
+          "python3",
+          "-I",
+          "-B",
+          "{evals}/acceptance/waiting_list_checks.py",
+          "{workspace}",
+          "AC-5"
+        ]
+      },
+      {
+        "id": "AC-6",
+        "description": "Bulk joins preserve order, trim names, and return positions, including an empty batch.",
+        "verify": [
+          "python3",
+          "-I",
+          "-B",
+          "{evals}/acceptance/waiting_list_checks.py",
+          "{workspace}",
+          "AC-6"
+        ]
+      },
+      {
+        "id": "AC-7",
+        "description": "Invalid, duplicate, or over-capacity batches leave the entire list unchanged.",
+        "verify": [
+          "python3",
+          "-I",
+          "-B",
+          "{evals}/acceptance/waiting_list_checks.py",
+          "{workspace}",
+          "AC-7"
+        ]
+      },
+      {
+        "id": "AC-8",
+        "description": "Snapshots cannot mutate the list and separate instances retain separate state.",
+        "verify": [
+          "python3",
+          "-I",
+          "-B",
+          "{evals}/acceptance/waiting_list_checks.py",
+          "{workspace}",
+          "AC-8"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "mcp-adaptive-selection-simulated",
+    "language": "python",
+    "route": "REVIEW_ONLY",
+    "fixture": "mcp-selection",
+    "quality_eval": true,
+    "evidence_kind": "simulated_selection",
+    "prompt": "Review these tool choices conceptually using only the supplied inventory; do not inspect files or contact services. Available: local_search (exact repository text lookup), harness-context7 (current framework API documentation), harness-sentry (production exceptions and traces), harness-playwright (rendered pages), supplied_logs (logs provided by the user). Serena is unavailable. Choose the most directly useful available tool for each situation: local_symbol asks where a known symbol is defined; framework_api asks about the current supported framework API; production_error asks to investigate a production exception; rendered_page asks to inspect a rendering regression; sentry_unavailable asks to investigate a production exception after Sentry has become unavailable, using logs the user supplied. Return your recommendations as one plain-text line beginning TOOL_SELECTION: followed by JSON with evidence_kind equal to simulated_selection, selections mapping those five situation names to tool names, and services_contacted as an empty list. Then add a separate normal Harness status line for this conceptual review, using the REVIEW_ONLY route and describing live MCP execution as not required. These recommendations describe a simulation.",
+    "expect_change": false,
+    "allowed_changed_paths": [],
+    "requires": [
+      "python3"
+    ],
+    "verify": [],
+    "acceptance_criteria": [
+      {
+        "id": "local_symbol",
+        "description": "Select an available tool appropriate for local symbol.",
+        "verify": [
+          "python3",
+          "-I",
+          "-B",
+          "{evals}/acceptance/tool_selection_checks.py",
+          "{response}",
+          "local_symbol"
+        ]
+      },
+      {
+        "id": "framework_api",
+        "description": "Select an available tool appropriate for framework api.",
+        "verify": [
+          "python3",
+          "-I",
+          "-B",
+          "{evals}/acceptance/tool_selection_checks.py",
+          "{response}",
+          "framework_api"
+        ]
+      },
+      {
+        "id": "production_error",
+        "description": "Select an available tool appropriate for production error.",
+        "verify": [
+          "python3",
+          "-I",
+          "-B",
+          "{evals}/acceptance/tool_selection_checks.py",
+          "{response}",
+          "production_error"
+        ]
+      },
+      {
+        "id": "rendered_page",
+        "description": "Select an available tool appropriate for rendered page.",
+        "verify": [
+          "python3",
+          "-I",
+          "-B",
+          "{evals}/acceptance/tool_selection_checks.py",
+          "{response}",
+          "rendered_page"
+        ]
+      },
+      {
+        "id": "sentry_unavailable",
+        "description": "Select an available tool appropriate for sentry unavailable.",
+        "verify": [
+          "python3",
+          "-I",
+          "-B",
+          "{evals}/acceptance/tool_selection_checks.py",
+          "{response}",
+          "sentry_unavailable"
+        ]
+      }
+    ]
   }
 ]

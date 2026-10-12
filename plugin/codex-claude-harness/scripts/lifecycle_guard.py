@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 from contextlib import contextmanager
 import hashlib
+import importlib.util
 import itertools
 import json
 import os
@@ -947,14 +948,93 @@ def _runtime_version(
     return match.group(1) if match.lastindex else match.group(0)
 
 
+def _mcp_context(plugin_root: Optional[Path] = None) -> Optional[str]:
+    """Describe only allowlisted identities from this plugin's rendered config."""
+    root = plugin_root if plugin_root is not None else Path(__file__).parent.parent
+    config = root / "mcp_config.json"
+    if root.is_symlink() or config.is_symlink():
+        return None
+    text = _read_small(config)
+    if text is None:
+        return None
+    try:
+        value = json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    servers = value.get("mcpServers") if isinstance(value, dict) else None
+    if not isinstance(servers, dict):
+        return None
+    capabilities = {
+        "harness-context7": "docs",
+        "harness-serena": "symbols",
+        "harness-playwright": "rendered browser",
+        "harness-github": "GitHub",
+        "harness-sentry": "traces",
+    }
+    candidates = ["codex-claude-harness_%s=%s" % (name, capability)
+                  for name, capability in capabilities.items()
+                  if isinstance(servers.get(name), dict)
+                  and servers[name].get("disabled") is False]
+    if not candidates:
+        return None
+    # Cached definitions describe arguments, never the current native dispatcher.
+    # Check the exposed invoker first to avoid speculative calls and wasted reads.
+    definitions = Path.home() / ".gemini" / "antigravity-cli" / "mcp"
+    message = (
+        "Configured MCP candidates (not availability or authorization proof): "
+        + "; ".join(candidates) + ". Check native session inventory for "
+        "MCP invoker. No invoker: blocked; no alternate client or schema search. "
+        "Exact definition: call_mcp_tool(ServerName, ToolName, Arguments) "
+        "only when advertised. Next client schema: %s/<exact-server>/. "
+        "Cache is metadata. Unknown tool: dispatch failure before Ask; "
+        "stop, do not guess aliases. Main owns MCP discovery/execution unless worker inventory "
+        "confirms required tools; worker returns blocked. With schema/args invoke "
+        "authorized native tool; result/Ask proves availability, not repo/docs/tests except "
+        "config diagnosis. No private global config. Keep Ask; denied: blocked without "
+        "retrying, alternate execution or permission changes."
+        % definitions
+    )
+    if len(message.encode("utf-8")) > MAX_CONTEXT_BYTES:
+        # Preserve approval/denial instructions instead of truncating the tail.
+        message = message.replace(str(definitions), "the CLI-provided MCP schema directory")
+    return message
+
+
+def _observed_id_context(payload: Dict[str, Any]) -> Optional[str]:
+    # Load the installed sibling by absolute path, never a project module or
+    # sys.path entry with the same name. The gate owns transcript/state safety.
+    path = Path(__file__).resolve().with_name("verification_gate.py")
+    if path.is_symlink():
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location("_harness_context_gate", path)
+        if spec is None or spec.loader is None:
+            return None
+        gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        message = gate._observed_id_context(payload)
+        if isinstance(message, str) and len(message.encode("utf-8")) <= MAX_CONTEXT_BYTES:
+            return message
+    except (OSError, ValueError, TypeError, KeyError, OverflowError):
+        pass
+    return None
+
+
 def _context(payload: Dict[str, Any]) -> Dict[str, Any]:
     invocation = payload.get("invocationNum")
-    if not isinstance(invocation, int) or isinstance(invocation, bool) or invocation != 0:
+    if type(invocation) is not int or invocation < 0:
         return {}
+    observed_ids = _observed_id_context(payload)
+    steps = [{"ephemeralMessage": observed_ids}] if observed_ids else []
+    if invocation != 0:
+        return {"injectSteps": steps} if steps else {}
     _cleanup_stale_format_locks()
     roots = _workspace_roots(payload)
     if not roots:
-        return {}
+        return {"injectSteps": steps} if steps else {}
+    inventory = _mcp_context()
+    if inventory:
+        steps.append({"ephemeralMessage": inventory})
 
     stacks: List[str] = []
     runtime_specs: List[Tuple[str, Sequence[str]]] = []
@@ -972,7 +1052,7 @@ def _context(payload: Dict[str, Any]) -> Dict[str, Any]:
     topology = list(dict.fromkeys(topology))
     checks = list(dict.fromkeys(checks))
     if not stacks and not runtime_specs and not topology and not checks:
-        return {}
+        return {"injectSteps": steps} if steps else {}
 
     runtime_values = []
     forbidden_executable_roots = _untrusted_roots(payload)
@@ -981,7 +1061,7 @@ def _context(payload: Dict[str, Any]) -> Dict[str, Any]:
         if version:
             runtime_values.append("%s: %s" % (label, version))
     if not stacks and not runtime_values and not topology and not checks:
-        return {}
+        return {"injectSteps": steps} if steps else {}
     parts = ["Detected project context (advisory; static manifests and local runtime versions)."]
     if stacks:
         parts.append("Frameworks: %s." % ", ".join(stacks[:12]))
@@ -998,7 +1078,7 @@ def _context(payload: Dict[str, Any]) -> Dict[str, Any]:
     encoded = message.encode("utf-8")
     if len(encoded) > MAX_CONTEXT_BYTES:
         message = encoded[:MAX_CONTEXT_BYTES].decode("utf-8", "ignore")
-    return {"injectSteps": [{"ephemeralMessage": message}]}
+    return {"injectSteps": [{"ephemeralMessage": message}] + steps}
 
 
 def _configured_prettier(directory: Path, root: Path) -> bool:

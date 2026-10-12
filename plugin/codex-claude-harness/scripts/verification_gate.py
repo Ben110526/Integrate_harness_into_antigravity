@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Bounded Stop hook for post-write evidence and local citation grounding.
+"""Bounded Stop hook for task completion, post-write evidence, and citations.
 
 The hook records step numbers, short evidence labels, and bounded workspace-
 relative changed paths in the conversation artifact directory. It never
-executes project checks itself. On compatible transcripts it also verifies
-that explicit local file citations resolve inside the current workspace.
+executes project checks itself. Compatible transcripts support an immutable
+acceptance inventory, per-criterion observed evidence, and local citations.
 """
 
 from __future__ import annotations
@@ -50,6 +50,12 @@ EVIDENCE = "evidence"
 MUTATION = "mutation"
 NEUTRAL = "neutral"
 WAIVER = "waiver"
+FAILURE = "failure"
+TASK_CONTRACT_FILE = "harness-task-contract.json"
+ACCEPTANCE_REVIEW_FILE = "harness-acceptance-review.json"
+RESULT_MARKER = "HARNESS_RESULT:"
+MAX_REQUIREMENTS = 64
+MAX_CHECK_EVENTS = 128
 
 _SCRIPT_EVIDENCE_NAME = re.compile(
     r"(?:^|[-_.])(?:test|tests|check|lint|verify|validate|doctor|build)(?:[-_.]|$)",
@@ -323,10 +329,13 @@ def _cleanup_fallback_states(payload: dict[str, Any]) -> None:
     _cleanup_stale_temp_states()
 
 
-def _load_state(path: Path) -> dict[str, Any]:
+def _load_state(path: Path, max_bytes: Optional[int] = None) -> dict[str, Any]:
     try:
         with _open_regular_file(path, os.O_RDONLY) as handle:
-            state = json.loads(handle.read().decode("utf-8"))
+            data = handle.read() if max_bytes is None else handle.read(max_bytes + 1)
+            if max_bytes is not None and len(data) > max_bytes:
+                return {}
+            state = json.loads(data.decode("utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
     return state if isinstance(state, dict) else {}
@@ -461,9 +470,7 @@ def _content_was_truncated(record: dict[str, Any]) -> bool:
     return False
 
 
-def _latest_model_response(
-    payload: dict[str, Any]
-) -> Optional[tuple[str, int, int]]:
+def _transcript_records(payload: dict[str, Any]) -> Optional[list[dict[str, Any]]]:
     lines = _read_transcript_tail(payload)
     if lines is None:
         return None
@@ -480,6 +487,34 @@ def _latest_model_response(
         if not isinstance(record, dict):
             return None
         records.append(record)
+    return records
+
+
+def _latest_user_request(
+    payload: dict[str, Any], records: Optional[list[dict[str, Any]]] = None,
+) -> Optional[tuple[str, int]]:
+    records = _transcript_records(payload) if records is None else records
+    if records is None:
+        return None
+    for record in reversed(records):
+        if str(record.get("source", "")).upper() not in {"USER", "USER_EXPLICIT"}:
+            continue
+        if str(record.get("type", "")).upper() not in {"REQUEST", "USER_INPUT"}:
+            continue
+        step, content = record.get("step_index"), record.get("content")
+        if (not isinstance(step, int) or isinstance(step, bool)
+                or not isinstance(content, str) or _content_was_truncated(record)):
+            return None
+        return content, step
+    return None
+
+
+def _latest_model_response(
+    payload: dict[str, Any]
+) -> Optional[tuple[str, int, int]]:
+    records = _transcript_records(payload)
+    if records is None:
+        return None
 
     user_steps = [
         record.get("step_index")
@@ -1548,6 +1583,30 @@ def _command_is_in_workspace(args: dict[str, Any], payload: dict[str, Any]) -> b
     return any(_is_within(candidate, root) for root in roots)
 
 
+def _command_contains_check(command: str, depth: int = 0) -> bool:
+    """Keep failures from checks anywhere in a mixed chain, including wrappers."""
+    segments, _ = _tokens(command)
+    for segment in segments:
+        if _classify_segment(segment, depth)[0] == EVIDENCE:
+            return True
+        values = _strip_prefixes(segment)
+        if not values or depth >= 2:
+            continue
+        executable, arguments = _executable(values[0]), values[1:]
+        lowered = [value.casefold() for value in arguments]
+        options = {"-c", "-lc"} if executable in {"bash", "sh", "zsh"} else set()
+        if executable in {"powershell", "pwsh"}:
+            options = {"-command", "-c"}
+        if executable == "cmd":
+            options = {"/c", "-c"}
+        for index, option in enumerate(lowered):
+            if option in options and index + 1 < len(arguments):
+                nested = arguments[index + 1] if executable in {"bash", "sh", "zsh"} else " ".join(arguments[index + 1:])
+                if _command_contains_check(nested, depth + 1):
+                    return True
+    return False
+
+
 def _event(name: str, args: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
     if name in WRITE_TOOLS and _is_workspace_write(args, payload):
         path = _workspace_relative_target(args, payload)
@@ -1559,6 +1618,7 @@ def _event(name: str, args: dict[str, Any], payload: dict[str, Any]) -> dict[str
     if name == "run_command" and _command_is_in_workspace(args, payload):
         command = _command(args)
         kind, waiver, contains_mutation = _classify_command(command)
+        contains_check = _command_contains_check(command)
         behavioral = kind == EVIDENCE and _command_has_behavioral_evidence(command)
         # An ordered chain such as `formatter && static-check` still changes
         # runtime-facing files without exercising behavior. Preserve it as a
@@ -1569,6 +1629,8 @@ def _event(name: str, args: dict[str, Any], payload: dict[str, Any]) -> dict[str
             event: dict[str, Any] = {"kind": kind}
             if contains_mutation:
                 event["containsMutation"] = True
+            if contains_check:
+                event["containsCheck"] = True
             if kind == MUTATION:
                 event["requiresBehavioral"] = True
             if behavioral:
@@ -1579,11 +1641,525 @@ def _event(name: str, args: dict[str, Any], payload: dict[str, Any]) -> dict[str
     return {}
 
 
+def _artifact_json(args: dict[str, Any], payload: dict[str, Any], filename: str) -> Optional[dict[str, Any]]:
+    target, directory = args.get("TargetFile"), payload.get("artifactDirectoryPath")
+    if not isinstance(target, str) or not isinstance(directory, str):
+        return None
+    artifact = Path(directory).resolve(strict=False)
+    candidate = _as_local_path(target)
+    if not candidate.is_absolute():
+        candidate = artifact / candidate
+    if candidate.name != filename or not _is_within(candidate, artifact):
+        return None
+    raw = args.get("CodeContent")
+    if not isinstance(raw, str) or len(raw.encode("utf-8")) > MAX_RESPONSE_BYTES:
+        raise ValueError("invalid artifact size")
+    value = json.loads(raw)
+    if not isinstance(value, dict):
+        raise ValueError("artifact must be an object")
+    return value
+
+
+def _bounded_text(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip()) and len(value) <= 2000
+
+
+def _register_multiturn_contract(
+    state: dict[str, Any], contract: dict[str, Any], payload: dict[str, Any], step: int,
+    content: str, user_step: int,
+) -> None:
+    allowed = {"version", "taskId", "revision", "requirements", "scopeChanges", "replacesTask"}
+    if set(contract) - allowed:
+        raise ValueError("unknown contract fields")
+    task_id, revision = contract.get("taskId"), contract.get("revision")
+    if not isinstance(task_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", task_id):
+        raise ValueError("invalid task ID")
+    if type(revision) is not int or revision < 1:
+        raise ValueError("invalid revision")
+    previous = state.get("taskContract", {})
+    same_task = previous.get("version") == 2 and previous.get("taskId") == task_id
+    migrating = bool(previous) and previous.get("version", 1) == 1
+    continuing = same_task or migrating
+    digest = hashlib.sha256(json.dumps(contract, sort_keys=True).encode("utf-8")).hexdigest()
+    if same_task and revision == previous["revision"]:
+        if previous.get("definitionDigest") != digest or previous["userStep"] != user_step:
+            raise ValueError("revision reused for a different request or inventory")
+        state.pop("taskContractError", None)
+        return
+    if revision != (previous["revision"] + 1 if same_task else 1):
+        raise ValueError("revision must advance exactly once")
+    if previous.get("version") == 2 and not same_task:
+        replacement = contract.get("replacesTask")
+        if (not isinstance(replacement, dict) or set(replacement) != {"taskId", "request"}
+                or replacement["taskId"] != previous["taskId"]
+                or not _bounded_text(replacement["request"]) or replacement["request"] not in content
+                or user_step <= previous["userStep"]):
+            raise ValueError("a new task needs the explicit current user scope change")
+    elif "replacesTask" in contract:
+        raise ValueError("unexpected task replacement")
+
+    rows = contract.get("requirements")
+    if not isinstance(rows, list) or not 1 <= len(rows) <= MAX_REQUIREMENTS:
+        raise ValueError("invalid inventory")
+    old = {
+        row["id"]: ({**row, "sourceStep": previous["userStep"]} if migrating else row)
+        for row in previous.get("requirements", [])
+    } if continuing else {}
+    records = _transcript_records(payload) or []
+    sources = {
+        record["step_index"]: record["content"] for record in records
+        if str(record.get("source", "")).upper() in {"USER", "USER_EXPLICIT"}
+        and str(record.get("type", "")).upper() in {"REQUEST", "USER_INPUT"}
+        and type(record.get("step_index")) is int and isinstance(record.get("content"), str)
+        and not _content_was_truncated(record)
+    }
+    retired = list(previous.get("retiredIds", [])) if continuing else []
+    current: dict[str, Any] = {}
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != {"id", "request", "acceptance", "verification", "sourceStep"}:
+            raise ValueError("invalid requirement")
+        identifier = row["id"]
+        if (not isinstance(identifier, str) or not re.fullmatch(r"AC-[1-9][0-9]{0,3}", identifier)
+                or identifier in current or identifier in retired):
+            raise ValueError("invalid, duplicate, or retired requirement ID")
+        if (row["verification"] not in {"behavioral", "static"}
+                or not all(_bounded_text(row[key]) for key in ("request", "acceptance"))
+                or type(row["sourceStep"]) is not int or not 0 <= row["sourceStep"] <= user_step):
+            raise ValueError("invalid requirement fields")
+        # Previously grounded, unchanged excerpts survive bounded transcript eviction.
+        if old.get(identifier) != row and row["request"] not in sources.get(row["sourceStep"], ""):
+            raise ValueError("requirement is not grounded in its originating user turn")
+        current[identifier] = row
+
+    changes = contract.get("scopeChanges", [])
+    if not isinstance(changes, list) or len(changes) > MAX_REQUIREMENTS:
+        raise ValueError("invalid scope changes")
+    changed = {identifier for identifier, row in old.items() if current.get(identifier) != row}
+    change_quotes: dict[str, str] = {}
+    for change in changes:
+        if (not isinstance(change, dict) or set(change) != {"id", "request"}
+                or not isinstance(change["id"], str) or change["id"] in change_quotes
+                or not _bounded_text(change["request"]) or change["request"] not in content):
+            raise ValueError("invalid scope change source")
+        change_quotes[change["id"]] = change["request"]
+    if set(change_quotes) != changed:
+        raise ValueError("old requirements cannot disappear or change without explicit scope changes")
+    if changed and user_step <= previous["userStep"]:
+        raise ValueError("changing existing acceptance needs a new user instruction")
+    if continuing and user_step == previous["userStep"] and state.get("lastWriteStep", -1) > user_step:
+        raise ValueError("same-turn coverage corrections must precede implementation")
+    history = list(previous.get("scopeHistory", [])) if continuing else []
+    for identifier in sorted(changed):
+        removed = identifier not in current
+        history.append({"previous": old[identifier], "request": change_quotes[identifier],
+                        "userStep": user_step, "revision": revision, "removed": removed})
+        if removed:
+            retired.append(identifier)
+    if len(history) > MAX_CHECK_EVENTS or len(retired) > MAX_CHECK_EVENTS:
+        raise ValueError("scope history exceeds its safe bound")
+    late = any(user_step < write < step for write in state.get("writeSteps", []))
+    origin = previous.get("originStep", previous.get("userStep")) if continuing else min(row["sourceStep"] for row in rows)
+    if not continuing:
+        # Explicit replacement ends the old task's verification debt, not its files.
+        for key in ("lastWriteStep", "lastBehavioralWriteStep", "lastEvidenceStep",
+                    "lastBehavioralEvidenceStep", "lastWaiverStep", "verifiedMutationStep",
+                    "failureOverflowStep"):
+            if state.get(key, origin) <= origin:
+                state.pop(key, None)
+        state["writeSteps"] = [write for write in state.get("writeSteps", []) if write > origin]
+        state["checkEvents"] = [check for check in state.get("checkEvents", []) if check["step"] > origin]
+        state.pop("modifiedPaths", None)
+        state["gateRetries"] = 0
+    state["taskContract"] = {
+        "version": 2, "taskId": task_id, "revision": revision, "userStep": user_step,
+        "originStep": origin, "registeredStep": step, "requirements": rows, "late": late,
+        "retiredIds": retired, "scopeHistory": history, "definitionDigest": digest,
+    }
+    later_writes = [write for write in state.get("writeSteps", []) if write > step]
+    if later_writes:
+        state["taskContract"]["firstWriteStep"] = min(later_writes)
+    state["failedChecks"] = {
+        command: failed_step for command, failed_step in state.get("failedChecks", {}).items()
+        if failed_step > origin
+    }
+    state.pop("acceptanceReviews", None)
+    state.pop("acceptanceReviewErrors", None)
+    state.pop("taskContractError", None)
+
+
+def _register_acceptance_review(
+    state: dict[str, Any], args: dict[str, Any], payload: dict[str, Any], step: int
+) -> bool:
+    contract = state.get("taskContract", {})
+    if contract.get("version") == 2 and step <= contract["registeredStep"]:
+        return False
+    phase = "invalid"
+    try:
+        review = _artifact_json(args, payload, ACCEPTANCE_REVIEW_FILE)
+        if review is None:
+            return False
+        request = _latest_user_request(payload)
+        if (contract.get("version") != 2 or request is None or request[1] != contract["userStep"]
+                or type(review.get("version")) is not int or review["version"] != 1
+                or review.get("taskId") != contract["taskId"]
+                or type(review.get("revision")) is not int or review["revision"] != contract["revision"]
+                or step <= contract["registeredStep"]):
+            raise ValueError("review does not match the current contract")
+        phase_value = review.get("phase")
+        if phase_value not in {"scope", "delivery"}:
+            raise ValueError("invalid review phase")
+        phase = phase_value
+        unmapped = review.get("unmappedRequests")
+        if (not isinstance(unmapped, list) or len(unmapped) > MAX_REQUIREMENTS
+                or not all(_bounded_text(item) for item in unmapped)):
+            raise ValueError("invalid unmapped request inventory")
+        expected = {row["id"] for row in contract["requirements"]}
+        if phase == "scope":
+            covered = review.get("coveredIds")
+            if (not isinstance(covered, list) or not all(isinstance(item, str) for item in covered)
+                    or len(covered) != len(set(covered)) or set(covered) != expected):
+                raise ValueError("scope review must account for every active requirement")
+        else:
+            rows = review.get("requirements")
+            if not isinstance(rows, list) or len(rows) != len(expected):
+                raise ValueError("delivery review must account for every active requirement")
+            seen = set()
+            for row in rows:
+                if (not isinstance(row, dict) or set(row) != {"id", "status", "evidenceSteps", "reason"}
+                        or not isinstance(row["id"], str) or row["id"] not in expected or row["id"] in seen
+                        or row["status"] not in {"passed", "failed", "blocked", "unverified"}
+                        or not _bounded_text(row["reason"])):
+                    raise ValueError("invalid delivery assessment or missing relevance explanation")
+                evidence = row["evidenceSteps"]
+                if (not isinstance(evidence, list) or len(evidence) > MAX_CHECK_EVENTS
+                        or any(type(item) is not int or item >= step for item in evidence)
+                        or len(evidence) != len(set(evidence))
+                        or (row["status"] == "passed" and not evidence)):
+                    raise ValueError("invalid reviewed evidence steps")
+                seen.add(row["id"])
+        reviews = state.setdefault("acceptanceReviews", {})
+        reviews[phase] = {**review, "step": step}
+        errors = state.setdefault("acceptanceReviewErrors", {})
+        errors.pop(phase, None)
+        errors.pop("invalid", None)
+    except (ValueError, TypeError, KeyError):
+        state.setdefault("acceptanceReviewErrors", {})[phase] = step
+    return True
+
+
+def _register_contract(
+    state: dict[str, Any], name: str, args: dict[str, Any], payload: dict[str, Any], step: int
+) -> bool:
+    if name != "write_to_file" or args.get("IsArtifact") is not True:
+        return False
+    target, directory = args.get("TargetFile"), payload.get("artifactDirectoryPath")
+    if not isinstance(target, str) or not isinstance(directory, str):
+        return False
+    artifact = Path(directory).resolve(strict=False)
+    candidate = _as_local_path(target)
+    if not candidate.is_absolute():
+        candidate = artifact / candidate
+    if candidate.name != TASK_CONTRACT_FILE or not _is_within(candidate, artifact):
+        return False
+    request = _latest_user_request(payload)
+    if request is None:
+        return False
+    content, user_step = request
+    if step <= user_step:
+        return False
+    previous = state.get("taskContract")
+    try:
+        raw = args.get("CodeContent")
+        if not isinstance(raw, str) or len(raw.encode("utf-8")) > MAX_RESPONSE_BYTES:
+            raise ValueError("invalid contract size")
+        contract = json.loads(raw)
+        if not isinstance(contract, dict) or type(contract.get("version")) is not int:
+            raise ValueError("invalid version")
+        if contract["version"] == 2:
+            _register_multiturn_contract(state, contract, payload, step, content, user_step)
+            return True
+        if contract["version"] != 1 or (isinstance(previous, dict) and previous.get("version") == 2):
+            raise ValueError("invalid version or attempted contract downgrade")
+        rows = contract.get("requirements")
+        if not isinstance(rows, list) or not 1 <= len(rows) <= MAX_REQUIREMENTS:
+            raise ValueError("invalid inventory")
+        ids = set()
+        for row in rows:
+            if not isinstance(row, dict) or set(row) != {"id", "request", "acceptance", "verification"}:
+                raise ValueError("invalid requirement")
+            identifier = row["id"]
+            if not isinstance(identifier, str) or not re.fullmatch(r"AC-[1-9][0-9]{0,3}", identifier) or identifier in ids:
+                raise ValueError("invalid ID")
+            ids.add(identifier)
+            if row["verification"] not in {"behavioral", "static"}:
+                raise ValueError("invalid check kind")
+            for key in ("request", "acceptance"):
+                if not isinstance(row[key], str) or not row[key].strip() or len(row[key]) > 2000:
+                    raise ValueError("invalid requirement text")
+            if row["request"] not in content:
+                raise ValueError("ungrounded request quote")
+        if isinstance(previous, dict) and previous.get("userStep") == user_step:
+            if previous.get("requirements") != rows:
+                raise ValueError("inventory changed within a turn")
+            return state.pop("taskContractError", None) is not None
+        late = any(user_step < write < step for write in state.get("writeSteps", []))
+        state["taskContract"] = {
+            "userStep": user_step, "registeredStep": step,
+            "requirements": rows, "late": late,
+        }
+        state["failedChecks"] = {
+            command: failed_step for command, failed_step in state.get("failedChecks", {}).items()
+            if failed_step > user_step
+        }
+        state.pop("taskContractError", None)
+    except (ValueError, TypeError):
+        # A rejected rewrite cannot silently remove or weaken the original ACs.
+        state["taskContractError"] = user_step
+    return True
+
+
+def _record_check(
+    state: dict[str, Any], event: dict[str, Any], args: dict[str, Any], step: int
+) -> bool:
+    contract = state.get("taskContract", {})
+    if contract.get("version") == 2 and step <= contract["originStep"]:
+        return False
+    if event.get("kind") not in {EVIDENCE, FAILURE} and not event.get("failedCheck") and not event.get("containsCheck"):
+        return False
+    fingerprint = hashlib.sha256(
+        (_command(args) + "\0" + str(args.get("Cwd", ""))).encode("utf-8", "replace")
+    ).hexdigest()
+    checks = state.get("checkEvents", [])
+    checks = [item for item in checks if isinstance(item, dict) and item.get("step") != step]
+    success = (event["kind"] != FAILURE and not event.get("failedCheck")
+               and (event["kind"] == EVIDENCE or event.get("containsCheck") is True))
+    checks.append({"step": step, "success": success,
+                   "behavioral": event.get("behavioral") is True, "command": fingerprint})
+    state["checkEvents"] = sorted(checks, key=lambda item: item["step"])[-MAX_CHECK_EVENTS:]
+    # Evidence may age out, but an unresolved failure must never age into a pass.
+    failures = state.get("failedChecks", {})
+    if success:
+        if failures.get(fingerprint, step) < step:
+            failures.pop(fingerprint, None)
+    elif not any(item["command"] == fingerprint and item["success"] and item["step"] > step for item in checks):
+        if fingerprint in failures or len(failures) < MAX_CHECK_EVENTS:
+            failures[fingerprint] = max(step, failures.get(fingerprint, -1))
+        else:
+            state["failureOverflowStep"] = max(step, state.get("failureOverflowStep", -1))
+    state["failedChecks"] = failures
+    return True
+
+
+def _completion_candidate_steps(
+    state: dict[str, Any], user_step: int, before_step: Optional[int],
+) -> tuple[int, dict[str, list[int]]]:
+    """Share the Stop candidate filter with the read-only invocation advisory."""
+    contract = state.get("taskContract", {})
+    contract = contract if isinstance(contract, dict) else {}
+    floor = max(value for value in (
+        user_step, contract.get("registeredStep", -1), state.get("lastWriteStep", -1)
+    ) if type(value) is int)
+    raw_checks = state.get("checkEvents", [])
+    checks = [item for item in raw_checks if isinstance(item, dict)
+              and type(item.get("step")) is int and type(item.get("success")) is bool
+              and type(item.get("behavioral")) is bool and isinstance(item.get("command"), str)] if isinstance(raw_checks, list) else []
+    candidates: dict[str, list[int]] = {"behavioral": [], "static": []}
+    for check in checks:
+        step = check["step"]
+        ordered_chain = (step == state.get("lastWriteStep") == state.get("verifiedMutationStep")
+                         and step > max(user_step, contract.get("registeredStep", -1)))
+        later_failure = any(
+            other["command"] == check["command"] and not other["success"]
+            and other["step"] > step for other in checks
+        )
+        if (check["success"] and (step > floor or ordered_chain)
+                and (before_step is None or step < before_step) and not later_failure):
+            candidates["behavioral" if check["behavioral"] else "static"].append(step)
+    return floor, {kind: steps[-8:] for kind, steps in candidates.items()}
+
+
+def _observed_id_context(payload: dict[str, Any]) -> Optional[str]:
+    """Read observed IDs only; never create state, register scope, or continue work."""
+    records = _transcript_records(payload)
+    if records is None:
+        return None
+    request = _latest_user_request(payload, records)
+    if request is None:
+        return None
+    user_steps = [record.get("step_index") for record in records
+                  if str(record.get("source", "")).upper() in {"USER", "USER_EXPLICIT"}
+                  and str(record.get("type", "")).upper() in {"REQUEST", "USER_INPUT"}]
+    # Do not guess from initialNumSteps, duplicate/out-of-order user records,
+    # or integers too large for a bounded advisory.
+    if (any(type(step) is not int or not 0 <= step <= 2**63 - 1 for step in user_steps)
+            or any(left >= right for left, right in zip(user_steps, user_steps[1:]))):
+        return None
+    user_step = request[1]
+    state = _load_state(_state_path(payload), max_bytes=MAX_TRANSCRIPT_TAIL_BYTES)
+    contract = state.get("taskContract")
+    if (not isinstance(contract, dict) or type(contract.get("userStep")) is not int
+            or contract["userStep"] != user_step
+            or type(contract.get("registeredStep")) is not int
+            or not user_step < contract["registeredStep"] <= 2**63 - 1):
+        # A new request can use its sourceStep before contract registration,
+        # but cannot inherit an earlier request's check candidates.
+        state = {}
+    checks = state.get("checkEvents", [])
+    if not isinstance(checks, list) or len(checks) > MAX_CHECK_EVENTS:
+        return None
+    floor, candidates = _completion_candidate_steps(state, user_step, None)
+    numbers = [floor] + candidates["behavioral"] + candidates["static"]
+    if any(not 0 <= value <= 2**63 - 1 for value in numbers):
+        return None
+    return (
+        f"Observed IDs (advisory for MAIN non-inline contract registration/reporting): "
+        f"current user step={user_step}; evidence floor={floor}; "
+        f"eligible check steps (last 8 per kind): behavioral={candidates['behavioral']}, "
+        f"static={candidates['static']}. Use observed current user step as sourceStep for "
+        "this request. Candidates only; AC relevance and current matching delivery review "
+        "remain required. Apply only when non-inline contract/reporting is already required; "
+        "read-only work needs no contract. "
+        "This hint does not prove completion or hook delivery."
+    )
+
+
+def _completion_repair_context(state: dict[str, Any], user_step: int, response_step: int) -> str:
+    """Expose bounded observed IDs for repair, never command text or request content."""
+    floor, candidates = _completion_candidate_steps(state, user_step, response_step)
+    # Evidence relevance and matching delivery review are still required. These
+    # IDs help repair a report without starting another broad check/review loop.
+    return (
+        f"Observed repair context: current user step={user_step}; evidence floor={floor}; "
+        f"eligible check steps (last 8 per kind): behavioral={candidates['behavioral'][-8:]}, "
+        f"static={candidates['static'][-8:]}. These are candidates only; AC relevance and "
+        "current matching delivery review remain required. Repair only invalid fields; "
+        "retain valid scope/reviews/evidence. Rerun checks only if missing, stale or failed."
+    )
+
+
+def _completion_status(payload: dict[str, Any], state: dict[str, Any]) -> tuple[str, str]:
+    latest = _latest_model_response(payload)
+    if latest is None:
+        return "unavailable", ""
+    content, user_step, response_step = latest
+    visible_content = _without_markdown_code_or_images(content)
+    result_lines = [
+        line.strip()[len(RESULT_MARKER):].strip()
+        for line in visible_content.splitlines() if line.strip().startswith(RESULT_MARKER)
+    ]
+    contract = state.get("taskContract")
+    current_contract = isinstance(contract, dict) and contract.get("userStep") == user_step
+    write_step = state.get("lastWriteStep", -1)
+    current_write = isinstance(write_step, int) and write_step > user_step
+    if not current_contract and not current_write and not result_lines:
+        return "inactive", ""
+    inline = re.search(r"^Harness: IMPLEMENT;[^\n]*;?\s*mode: inline-fast-path(?:;|$)", content, re.MULTILINE)
+    if not current_contract and inline and not result_lines and not (isinstance(contract, dict) and contract.get("version") == 2):
+        return "inactive", ""
+    if not current_contract:
+        return "invalid", "Register the current request's harness-task-contract.json artifact; no current requirement inventory exists."
+    if state.get("taskContractError") == user_step:
+        return "invalid", "The contract is invalid or was changed within the user turn. Restore its original inventory; scope changes need an explicit new user request."
+    try:
+        if len(result_lines) != 1:
+            raise ValueError("Include exactly one single-line HARNESS_RESULT JSON envelope.")
+        result = json.loads(result_lines[0])
+        if not isinstance(result, dict) or result.get("status") not in {"complete", "partial", "blocked"}:
+            raise ValueError("Result status must be complete, partial, or blocked.")
+        multiturn = contract.get("version") == 2
+        if multiturn and (result.get("taskId") != contract["taskId"]
+                          or type(result.get("revision")) is not int or result["revision"] != contract["revision"]):
+            raise ValueError("Report the active taskId and revision; do not reuse a superseded result.")
+        reviews = state.get("acceptanceReviews", {}) if multiturn else {}
+        delivery = reviews.get("delivery", {})
+        rows = result.get("requirements")
+        expected = {row["id"]: row for row in contract["requirements"]}
+        if not isinstance(rows, list) or len(rows) != len(expected):
+            raise ValueError("Report every original AC exactly once; do not drop unfinished requirements.")
+        seen = set()
+        checks = {item["step"]: item for item in state.get("checkEvents", [])}
+        floor = max(user_step, contract["registeredStep"], write_step)
+        passed = 0
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get("id"), str) or row["id"] not in expected or row["id"] in seen:
+                raise ValueError("Unknown or duplicate AC ID.")
+            seen.add(row["id"])
+            status = row.get("status")
+            if status not in {"passed", "failed", "blocked", "unverified"}:
+                raise ValueError("Each AC needs a supported status.")
+            if status != "passed":
+                if not isinstance(row.get("reason"), str) or not row["reason"].strip():
+                    raise ValueError("Every unfinished AC needs a concrete reason.")
+                continue
+            steps = row.get("evidenceSteps")
+            if not isinstance(steps, list) or not steps or any(type(step) is not int for step in steps):
+                raise ValueError("A passed AC needs recorded check step IDs.")
+            if multiturn:
+                reviewed = next((item for item in delivery.get("requirements", []) if item["id"] == row["id"]), {})
+                if (not floor < delivery.get("step", -1) < response_step
+                        or reviewed.get("status") != "passed"
+                        or set(reviewed.get("evidenceSteps", [])) != set(steps)
+                        or state.get("acceptanceReviewErrors")):
+                    raise ValueError("A passed AC needs a current delivery review explaining the relevance of the same evidence.")
+            for step in steps:
+                check = checks.get(step)
+                ordered_chain = (step == write_step == state.get("verifiedMutationStep")
+                                 and step > max(user_step, contract["registeredStep"]))
+                if check is None or not check["success"] or not ((floor < step or ordered_chain) and step < response_step):
+                    raise ValueError("A passed AC cites missing, failed, waived, or stale evidence.")
+                if expected[row["id"]]["verification"] == "behavioral" and not check["behavioral"]:
+                    raise ValueError("A behavioral AC cannot pass with static-only evidence.")
+                if any(item["command"] == check["command"] and not item["success"] and item["step"] > step for item in checks.values()):
+                    raise ValueError("A later failure invalidates the cited check; rerun or mark the AC unfinished.")
+            passed += 1
+        if result["status"] == "complete":
+            if multiturn:
+                scope = reviews.get("scope", {})
+                first_write = contract.get("firstWriteStep", response_step)
+                if (not contract["registeredStep"] < scope.get("step", -1) < first_write
+                        or scope.get("unmappedRequests") != [] or delivery.get("unmappedRequests") != []
+                        or state.get("acceptanceReviewErrors")):
+                    raise ValueError("Complete needs a scope review before implementation and a delivery review with no unmapped user requests.")
+            if contract.get("late") or any(user_step < write < contract["registeredStep"] for write in state.get("writeSteps", [])):
+                raise ValueError("The inventory was registered after implementation began; report partial and request an explicit scope review.")
+            if passed != len(expected):
+                raise ValueError("Complete requires every AC to pass; report the actual passed/total count and partial or blocked.")
+            failure_floor = contract["originStep"] if multiturn else user_step
+            if state.get("failureOverflowStep", -1) > failure_floor:
+                raise ValueError("Failure history exceeded its safe bound; report partial and request a new explicit verification scope.")
+            if any(step > failure_floor for step in state.get("failedChecks", {}).values()):
+                raise ValueError("A recorded check still fails; rerun that same command or report partial/blocked.")
+            for check in checks.values():
+                if check["step"] > failure_floor and not check["success"] and not any(
+                    later["command"] == check["command"] and later["success"] and later["step"] > check["step"]
+                    for later in checks.values()
+                ):
+                    raise ValueError("A recorded check still fails; resolve it or report partial/blocked.")
+        elif passed == len(expected):
+            raise ValueError("Partial/blocked must identify at least one unfinished AC.")
+        return result["status"], ""
+    except (ValueError, TypeError, KeyError) as error:
+        return "invalid", str(error) + " " + _completion_repair_context(state, user_step, response_step)
+
+
 def _apply_event(state: dict[str, Any], event: dict[str, Any], step: int) -> bool:
+    contract = state.get("taskContract", {})
+    if contract.get("version") == 2 and step <= contract["originStep"]:
+        return False
     kind = event.get("kind")
+    mixed = kind == EVIDENCE and event.get("containsMutation") is True
+    if mixed:
+        _apply_event(state, {"kind": MUTATION, "requiresBehavioral": True}, step)
     if kind == MUTATION:
+        previous_steps = state.get("writeSteps", [])
+        state["writeSteps"] = sorted(set([*previous_steps, step]))[-MAX_CHECK_EVENTS:]
+        changed = state["writeSteps"] != previous_steps
+        contract = state.get("taskContract", {})
+        if contract.get("version") == 2 and step > contract["registeredStep"]:
+            first_write = min(step, contract.get("firstWriteStep", step))
+            changed = changed or first_write != contract.get("firstWriteStep")
+            contract["firstWriteStep"] = first_write
         previous_write = state.get("lastWriteStep")
-        changed = False
         if not isinstance(previous_write, int) or step > previous_write:
             previous_evidence = state.get("lastEvidenceStep")
             if (
@@ -1621,8 +2197,19 @@ def _apply_event(state: dict[str, Any], event: dict[str, Any], step: int) -> boo
             state.pop("evidence", None)
             state.pop("waiverReason", None)
         return changed
+    if kind == FAILURE:
+        if step >= state.get("lastEvidenceStep", -1):
+            state.pop("lastEvidenceStep", None)
+            state.pop("lastBehavioralEvidenceStep", None)
+            state.pop("evidence", None)
+            state.pop("verifiedMutationStep", None)
+            state["gateRetries"] = 0
+        return True
     if kind in {EVIDENCE, WAIVER}:
         changed = False
+        if mixed and event.get("behavioral") is True:
+            state["verifiedMutationStep"] = step
+            changed = True
         if kind == EVIDENCE and event.get("behavioral") is True:
             previous_behavioral = state.get("lastBehavioralEvidenceStep")
             if not isinstance(previous_behavioral, int) or step > previous_behavioral:
@@ -1665,18 +2252,27 @@ def _handle_post(payload: dict[str, Any]) -> None:
         if event.get("kind") == MUTATION or event.get("containsMutation") is True:
             # Earlier segments in an `&&` chain may have changed files before a
             # later check failed, even when the chain's final kind is evidence.
-            event = {"kind": MUTATION, "requiresBehavioral": True}
+            event = {"kind": MUTATION, "requiresBehavioral": True,
+                     "failedCheck": event.get("containsCheck") is True}
+        elif event.get("kind") == EVIDENCE:
+            event["kind"] = FAILURE
         else:
             # A failed check or waiver is never evidence.
             _emit({})
             return
-    if event:
+    is_contract = name == "write_to_file" and args.get("IsArtifact") is True
+    if event or is_contract:
         path = _state_path(payload)
         with _state_lock(path) as acquired:
             if not acquired:
                 raise OSError(f"could not lock verification state: {path}")
             state = _load_state(path)
-            if _apply_event(state, event, step):
+            changed = _register_contract(state, name, args, payload, step) if is_contract else False
+            if is_contract:
+                changed = _register_acceptance_review(state, args, payload, step) or changed
+            changed = _record_check(state, event, args, step) or changed
+            changed = _apply_event(state, event, step) or changed
+            if changed:
                 _save_state(path, state)
 
     _emit({})
@@ -1706,6 +2302,17 @@ def _handle_stop(payload: dict[str, Any]) -> None:
         state_changed = False
         continue_reasons: list[str] = []
         warnings: list[str] = []
+        completion, completion_reason = _completion_status(payload, state)
+        if completion == "invalid":
+            continue_reasons.append(
+                "Task completion gate: " + completion_reason + " Do not claim full completion. "
+                "Report every AC and the actual passed/total count. A truthful partial/blocked "
+                "HARNESS_RESULT can finish without pretending missing work passed."
+            )
+        elif completion == "unavailable" and state.get("taskContract"):
+            warnings.append(
+                "Task completion coverage was not checked: no compatible current response transcript."
+            )
 
         if isinstance(citation_turn_step, int):
             previous_turn = state.get("citationTurnStep")
@@ -1741,16 +2348,18 @@ def _handle_stop(payload: dict[str, Any]) -> None:
         behavioral_evidence_step = state.get("lastBehavioralEvidenceStep")
         waiver_step = state.get("lastWaiverStep")
         has_current_evidence = (
-            isinstance(evidence_step, int) and evidence_step > write_step
+            isinstance(evidence_step, int) and (evidence_step > write_step
+                or evidence_step == write_step == state.get("verifiedMutationStep"))
         ) if isinstance(write_step, int) else False
         has_behavioral_evidence = not isinstance(behavioral_write_step, int) or any(
-            isinstance(candidate, int) and candidate > behavioral_write_step
+            isinstance(candidate, int) and (candidate > behavioral_write_step
+                or candidate == behavioral_write_step == state.get("verifiedMutationStep"))
             for candidate in (behavioral_evidence_step, waiver_step)
         )
         verification_missing = isinstance(write_step, int) and not (
             has_current_evidence and has_behavioral_evidence
         )
-        if verification_missing:
+        if verification_missing and completion not in {"partial", "blocked"}:
             retries = state.get("gateRetries", 0)
             if not isinstance(retries, int):
                 retries = 0

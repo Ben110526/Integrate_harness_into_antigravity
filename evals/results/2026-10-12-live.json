@@ -1,0 +1,289 @@
+{
+  "schema_version": 1,
+  "evaluation_date": "2026-10-12",
+  "client": "Antigravity first-party CLI",
+  "environment": {
+    "cli_versions_observed": [
+      "1.3.2",
+      "1.3.3"
+    ],
+    "doctor_passed": true,
+    "installed_behavior_matches_source": true,
+    "behavior_sha256": "ee53819dbbd144bffc8e36953723b09066e1f159f65ccb6522a16be5e4270102"
+  },
+  "multiturn": {
+    "result": {
+      "event": "quality_score",
+      "case": "multiturn-waiting-list",
+      "route": "IMPLEMENT",
+      "passed": 8,
+      "total": 8,
+      "coverage": 1.0,
+      "criteria": [
+        {
+          "id": "AC-1",
+          "description": "Positive integer capacity is enforced without mutating a full list.",
+          "status": "passed"
+        },
+        {
+          "id": "AC-2",
+          "description": "Names are trimmed; blank and non-string joins are rejected without mutation.",
+          "status": "passed"
+        },
+        {
+          "id": "AC-3",
+          "description": "The revised case-sensitive duplicate rule replaces the initial rule consistently.",
+          "status": "passed"
+        },
+        {
+          "id": "AC-4",
+          "description": "Cancellation, lookup positions, and FIFO service behave consistently.",
+          "status": "passed"
+        },
+        {
+          "id": "AC-5",
+          "description": "Cancellation and service free capacity for later joins.",
+          "status": "passed"
+        },
+        {
+          "id": "AC-6",
+          "description": "Bulk joins preserve order, trim names, and return positions, including an empty batch.",
+          "status": "passed"
+        },
+        {
+          "id": "AC-7",
+          "description": "Invalid, duplicate, or over-capacity batches leave the entire list unchanged.",
+          "status": "passed"
+        },
+        {
+          "id": "AC-8",
+          "description": "Snapshots cannot mutate the list and separate instances retain separate state.",
+          "status": "passed"
+        }
+      ],
+      "claimed": {
+        "status": "complete",
+        "passed": 15,
+        "total": 15
+      },
+      "completion_claim_error": null,
+      "false_complete": false,
+      "evidence_kind": "independent_behavioral_checks",
+      "model": "gemini-3.8-flash-high",
+      "turns": 4,
+      "public_verification": "passed",
+      "scope_error": null,
+      "success": true
+    },
+    "same_conversation": true,
+    "workflow_reminders": 0,
+    "automatic_continuations": 0,
+    "wall_time_minutes_approximate": 29,
+    "final_cli_usage_cumulative": {
+      "input_tokens": 1410072,
+      "output_tokens": 94574,
+      "thinking_tokens": 59927,
+      "cache_read_tokens": 23539714,
+      "total_tokens": 1504646
+    },
+    "turn_observations": [
+      {
+        "turn": 1,
+        "status": "SUCCESS",
+        "route": "IMPLEMENT",
+        "usage": {
+          "input_tokens": 300987,
+          "output_tokens": 24351,
+          "thinking_tokens": 15959,
+          "cache_read_tokens": 3395275,
+          "total_tokens": 325338
+        },
+        "same_conversation": true,
+        "denied_actions_count": 0
+      },
+      {
+        "turn": 2,
+        "status": "SUCCESS",
+        "route": "IMPLEMENT",
+        "usage": {
+          "input_tokens": 568128,
+          "output_tokens": 48151,
+          "thinking_tokens": 31947,
+          "cache_read_tokens": 9912450,
+          "total_tokens": 616279
+        },
+        "same_conversation": true,
+        "denied_actions_count": 0
+      },
+      {
+        "turn": 3,
+        "status": "SUCCESS",
+        "route": "IMPLEMENT",
+        "usage": {
+          "input_tokens": 898304,
+          "output_tokens": 65326,
+          "thinking_tokens": 41556,
+          "cache_read_tokens": 18884360,
+          "total_tokens": 963630
+        },
+        "same_conversation": true,
+        "denied_actions_count": 0
+      },
+      {
+        "turn": 4,
+        "status": "SUCCESS",
+        "route": "IMPLEMENT",
+        "usage": {
+          "input_tokens": 1410072,
+          "output_tokens": 94574,
+          "thinking_tokens": 59927,
+          "cache_read_tokens": 23539714,
+          "total_tokens": 1504646
+        },
+        "same_conversation": true,
+        "denied_actions_count": 0
+      }
+    ],
+    "evidence_note": "Final result independently scored. Passive file snapshots are not exact turn-boundary evidence; intermediate final-requirement scores are excluded."
+  },
+  "simulated_mcp_selection": {
+    "case": "mcp-adaptive-selection-simulated",
+    "passed": 5,
+    "total": 5,
+    "coverage": 1.0,
+    "route": "REVIEW_ONLY",
+    "response_contract_error": null,
+    "scope_error": null,
+    "success": true,
+    "false_complete": false,
+    "evidence_kind": "simulated_selection",
+    "duration_seconds": 23.262,
+    "usage": {
+      "input_tokens": 17790,
+      "output_tokens": 3407,
+      "thinking_tokens": 3292,
+      "cache_read_tokens": 0,
+      "total_tokens": 21197
+    },
+    "earlier_ambiguous_prompt_run": {
+      "passed": 5,
+      "total": 5,
+      "success": false,
+      "missing_harness_route": true
+    },
+    "prompt_revision": "Explicitly permits a separate Harness route line; five selection criteria unchanged."
+  },
+  "direct_mcp_health": {
+    "event": "direct_mcp_health",
+    "server": "harness-playwright",
+    "model_invoked": false,
+    "initialized": true,
+    "browser_navigate_available": true,
+    "navigation_is_error": false,
+    "snapshot_is_error": false,
+    "rendered_marker_observed": true,
+    "server_hit": true,
+    "content_types": [
+      "text"
+    ],
+    "passed": true
+  },
+  "headless_mcp_probes": [
+    {
+      "guided_tool_name": false,
+      "exit_code": 0,
+      "status": "SUCCESS",
+      "duration_seconds": 41.47,
+      "initial_text_correct": false,
+      "confirmation_correct": false,
+      "browser_page_hit": false,
+      "browser_confirmation_hit": false,
+      "observed_tool_names": [
+        "call_mcp_tool"
+      ],
+      "behavior_passed": false
+    },
+    {
+      "guided_tool_name": false,
+      "exit_code": 3,
+      "status": "ERROR",
+      "duration_seconds": 316.42,
+      "initial_text_correct": false,
+      "confirmation_correct": false,
+      "browser_page_hit": false,
+      "browser_confirmation_hit": false,
+      "observed_tool_names": [
+        "browser_navigate",
+        "call_mcp_tool",
+        "codex-claude-harness_harness-playwright"
+      ],
+      "behavior_passed": false
+    },
+    {
+      "guided_tool_name": true,
+      "exit_code": 0,
+      "status": "SUCCESS",
+      "duration_seconds": 21.09,
+      "initial_text_correct": false,
+      "confirmation_correct": false,
+      "browser_page_hit": false,
+      "browser_confirmation_hit": false,
+      "observed_tool_names": [
+        "browser_navigate",
+        "call_mcp_tool",
+        "codex-claude-harness_harness-playwright"
+      ],
+      "behavior_passed": false
+    }
+  ],
+  "headless_permission_diagnostic": {
+    "denied_actions_count": 1,
+    "stderr_permission_notice": true,
+    "terminal_response_empty": true,
+    "documentation": "https://antigravity.google/docs/cli/headless/"
+  },
+  "interactive_mcp_probe": {
+    "event": "interactive_mcp_probe",
+    "model": "gemini-3.8-flash-high",
+    "cli_version": "1.3.3",
+    "assisted": true,
+    "assistance": [
+      "operator supplied MCP server inventory hint",
+      "five individual MCP call approvals"
+    ],
+    "global_permissions_changed": false,
+    "private_configuration_read_denied": true,
+    "one_time_mcp_approvals": 5,
+    "observed_tool_sequence": [
+      "browser_navigate",
+      "browser_snapshot",
+      "browser_click",
+      "browser_snapshot",
+      "browser_close"
+    ],
+    "initial_text_correct": true,
+    "confirmation_correct": true,
+    "confirmation_sha256": "544a38134ba0277ee45db85f5be5cb766de1ed9bd2586e867ab0816a74d62e9d",
+    "browser_page_hit": true,
+    "browser_confirmation_hit": true,
+    "browser_hit_paths": [
+      "/",
+      "/confirmation"
+    ],
+    "harness_route_observed": null,
+    "behavior_passed": true,
+    "autonomous_discovery_proven": false
+  },
+  "verification": {
+    "targeted_eval_tests_passed": 25,
+    "diff_check_passed": true
+  },
+  "limitations": [
+    "No old-harness baseline or statistical improvement measurement.",
+    "One natural four-turn run; no repeated success-rate estimate.",
+    "CLI version changed between probes.",
+    "Interactive MCP success required an inventory hint and per-call permission approval.",
+    "Only Playwright execution was validated; selection for other servers was simulated.",
+    "Four-turn wall time and cumulative token counts were high."
+  ]
+}

@@ -78,6 +78,14 @@ PY
     continue
   fi
   selected=$((selected + 1))
+  quality_eval="$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])].get("quality_eval", False)).lower())' "${cases_path}" "${case_index}")"
+  if [[ "${quality_eval}" == "true" ]]; then
+    executed=$((executed + 1))
+    if ! python3 "${repo_root}/evals/output_quality.py" --case "${case_id}" --model "${model}" --confirm-quota-use; then
+      failures=$((failures + 1))
+    fi
+    continue
+  fi
   fixture="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])]["fixture"])' "${cases_path}" "${case_index}")"
   prompt="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])]["prompt"])' "${cases_path}" "${case_index}")"
   route="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))[int(sys.argv[2])]["route"])' "${cases_path}" "${case_index}")"
@@ -164,55 +172,26 @@ PY
     continue
   fi
 
-  if ! python3 - "${response_path}" "${expect_response_json}" "${reject_response_json}" "${only_response_lines_json}" "${route}" "${response_line_count_json}" "${inline_fast_path}" <<'PY'
+  if ! python3 - "${response_path}" "${expect_response_json}" "${reject_response_json}" "${only_response_lines_json}" "${route}" "${response_line_count_json}" "${inline_fast_path}" "${repo_root}/evals" <<'PY'
 import json
 import sys
 
-with open(sys.argv[1], encoding="utf-8") as handle:
-    response = json.load(handle)
-if response.get("status") != "SUCCESS":
-    raise SystemExit(f"unexpected status: {response.get('status')}")
-text = response.get("response", "")
-if "Harness:" not in text:
-    raise SystemExit("missing Harness status line")
-expected_route = sys.argv[5]
-harness_lines = [
-    line.strip() for line in text.splitlines()
-    if line.strip().startswith("Harness:")
-]
-reported_routes = [
-    line.partition(":")[2].split(";", 1)[0].strip()
-    for line in harness_lines
-]
-if expected_route not in reported_routes:
-    raise SystemExit(f"Harness status line does not name route {expected_route}")
-if sys.argv[7] == "true" and not any(
-    "mode: inline-fast-path" in line for line in harness_lines
-):
-    raise SystemExit("inline fast-path mode is missing from the Harness status line")
-missing = [term for term in json.loads(sys.argv[2]) if term not in text]
-if missing:
-    raise SystemExit(f"missing expected response terms: {missing}")
-folded_text = text.casefold()
-forbidden = [
-    term for term in json.loads(sys.argv[3])
-    if term.casefold() in folded_text
-]
-if forbidden:
-    raise SystemExit(f"response contains forbidden terms: {forbidden}")
-only_lines = json.loads(sys.argv[4])
-if only_lines:
-    nonblank = [line.strip() for line in text.splitlines() if line.strip()]
-    if nonblank != only_lines:
-        raise SystemExit(f"unexpected response lines: expected exactly {only_lines}")
-expected_line_count = json.loads(sys.argv[6])
-if expected_line_count is not None:
-    nonblank_count = len([line for line in text.splitlines() if line.strip()])
-    if nonblank_count != expected_line_count:
-        raise SystemExit(
-            f"unexpected response line count: expected {expected_line_count}, "
-            f"got {nonblank_count}"
-        )
+sys.path.insert(0, sys.argv[8])
+from output_quality import EvalError, require_response_contract, response_envelope
+
+case = {
+    "route": sys.argv[5],
+    "response_contains": json.loads(sys.argv[2]),
+    "response_not_contains": json.loads(sys.argv[3]),
+    "response_only_lines": json.loads(sys.argv[4]),
+    "response_line_count": json.loads(sys.argv[6]),
+    "inline_fast_path": sys.argv[7] == "true",
+}
+try:
+    require_response_contract(response_envelope(sys.argv[1]), case)
+except (EvalError, ValueError) as error:
+    raise SystemExit(str(error))
+
 PY
   then
     printf '[fail] %s: invalid response envelope\n' "${case_id}" >&2

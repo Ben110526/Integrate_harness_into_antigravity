@@ -80,37 +80,15 @@ def normalized_usage(result: dict[str, Any]) -> dict[str, int]:
 
 
 def require_response_contract(result: dict[str, Any], case: dict[str, Any]) -> None:
-    """Validate route and deterministic response assertions before counting usage."""
-    response = result.get("response")
-    if not isinstance(response, str):
-        raise BenchmarkError("terminal result has no text response")
-    reported_routes = {
-        line.strip().partition(":")[2].split(";", 1)[0].strip()
-        for line in response.splitlines()
-        if line.strip().startswith("Harness:")
-    }
-    if case["route"] not in reported_routes:
-        raise BenchmarkError(f"response did not report route {case['route']}")
-
-    missing = [term for term in case.get("response_contains", []) if term not in response]
-    if missing:
-        raise BenchmarkError("response omitted required evidence")
-    folded_response = response.casefold()
-    if any(
-        term.casefold() in folded_response
-        for term in case.get("response_not_contains", [])
-    ):
-        raise BenchmarkError("response contained forbidden evidence")
-    only_lines = case.get("response_only_lines", [])
-    if only_lines:
-        nonblank = [line.strip() for line in response.splitlines() if line.strip()]
-        if nonblank != only_lines:
-            raise BenchmarkError("response did not match the exact-line contract")
-    expected_line_count = case.get("response_line_count")
-    if expected_line_count is not None:
-        nonblank_count = len([line for line in response.splitlines() if line.strip()])
-        if nonblank_count != expected_line_count:
-            raise BenchmarkError("response did not match the line-count contract")
+    """Reuse smoke-eval response rules without treating prose as runtime proof."""
+    try:
+        from .output_quality import EvalError, require_response_contract as validate
+    except ImportError:
+        from output_quality import EvalError, require_response_contract as validate
+    try:
+        validate(result, case)
+    except EvalError as error:
+        raise BenchmarkError(str(error)) from error
 
 
 def emit(payload: dict[str, Any]) -> None:

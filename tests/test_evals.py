@@ -50,6 +50,21 @@ class EvalManifestTests(unittest.TestCase):
                 self.assertIsInstance(case["prompt"], str)
                 self.assertTrue(case["prompt"].strip())
                 self.assertIsInstance(case["expect_change"], bool)
+                turns = case.get("turns", [])
+                self.assertIsInstance(turns, list)
+                self.assertTrue(all(isinstance(turn, str) and turn.strip() for turn in turns))
+                self.assertIsInstance(case.get("quality_eval", False), bool)
+                if "allowed_routes" in case:
+                    self.assertTrue(case.get("quality_eval"))
+                    self.assertIsInstance(case["allowed_routes"], list)
+                    self.assertTrue(case["allowed_routes"])
+                    self.assertIn(case["route"], case["allowed_routes"])
+                    self.assertEqual(len(case["allowed_routes"]), len(set(case["allowed_routes"])))
+                    self.assertTrue(set(case["allowed_routes"]).issubset(ROUTES))
+                if turns:
+                    self.assertTrue(case.get("quality_eval"))
+                if case.get("quality_eval"):
+                    self.assertTrue(case.get("acceptance_criteria"))
                 self.assertIsInstance(case["verify"], list)
                 self.assertTrue(all(isinstance(arg, str) and arg for arg in case["verify"]))
                 self.assertIsInstance(case.get("requires", []), list)

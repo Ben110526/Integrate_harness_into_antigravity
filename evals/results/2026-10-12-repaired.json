@@ -1,0 +1,919 @@
+{
+  "schema_version": 1,
+  "evaluation_date": "2026-10-12",
+  "client": {
+    "name": "Antigravity CLI",
+    "version": "1.3.3",
+    "model": "gemini-3.8-flash-high"
+  },
+  "environment": {
+    "first_party_client_only": true,
+    "native_ask_preserved": true,
+    "global_permissions_changed": false
+  },
+  "installed_build": {
+    "behavior_sha256": "8603d7b719515b2534727b5e01cbbe742a1029a955c9c8a741d7cf3f07a9fc59",
+    "runtime": {
+      "lifecycle_guard.py": "a991241467db9e064533ce4b82a75edf88d1799c3023c36c62abb8d6d5cc3ba9",
+      "verification_gate.py": "01d03c2254579d5411e7175f8b2e641f22d385f8a20dba75a884ea14bcb3869e"
+    },
+    "eval_runner_sha256": "ae5aa45dbeeaf7be8c6f6a57429b80fd392edff785fc28596198a8f2524a9422"
+  },
+  "verification": {
+    "installer_exit_code": 0,
+    "source_runtime_installed_match": true,
+    "managed_global_policy_matches_source": true,
+    "python_tests": 300,
+    "python_skipped": 3,
+    "node_tests": 15,
+    "source_checks_passed": true
+  },
+  "multiturn": {
+    "result": {
+      "event": "quality_score",
+      "case": "multiturn-waiting-list",
+      "route": "IMPLEMENT",
+      "passed": 8,
+      "total": 8,
+      "coverage": 1.0,
+      "criteria": [
+        {
+          "id": "AC-1",
+          "description": "Positive integer capacity is enforced without mutating a full list.",
+          "status": "passed"
+        },
+        {
+          "id": "AC-2",
+          "description": "Names are trimmed; blank and non-string joins are rejected without mutation.",
+          "status": "passed"
+        },
+        {
+          "id": "AC-3",
+          "description": "The revised case-sensitive duplicate rule replaces the initial rule consistently.",
+          "status": "passed"
+        },
+        {
+          "id": "AC-4",
+          "description": "Cancellation, lookup positions, and FIFO service behave consistently.",
+          "status": "passed"
+        },
+        {
+          "id": "AC-5",
+          "description": "Cancellation and service free capacity for later joins.",
+          "status": "passed"
+        },
+        {
+          "id": "AC-6",
+          "description": "Bulk joins preserve order, trim names, and return positions, including an empty batch.",
+          "status": "passed"
+        },
+        {
+          "id": "AC-7",
+          "description": "Invalid, duplicate, or over-capacity batches leave the entire list unchanged.",
+          "status": "passed"
+        },
+        {
+          "id": "AC-8",
+          "description": "Snapshots cannot mutate the list and separate instances retain separate state.",
+          "status": "passed"
+        }
+      ],
+      "claimed": {
+        "status": "complete",
+        "passed": 13,
+        "total": 13
+      },
+      "completion_claim_error": null,
+      "false_complete": false,
+      "evidence_kind": "independent_behavioral_checks",
+      "public_verification": "passed",
+      "turns": 4,
+      "model": "gemini-3.8-flash-high",
+      "session_mode": "process-events",
+      "response_contract_error": null,
+      "turn_summaries": [
+        {
+          "turn": 1,
+          "status": "SUCCESS",
+          "route": "IMPLEMENT",
+          "duration_seconds": 315.412,
+          "usage": {
+            "input_tokens": 140555,
+            "output_tokens": 21727,
+            "thinking_tokens": 13916,
+            "cache_read_tokens": 921535,
+            "total_tokens": 162282
+          },
+          "event_diagnostics": {
+            "response_source": "last_completed_agent_response_step",
+            "agent_response_steps": 28,
+            "subagent_steps": 1,
+            "errored_steps": 3,
+            "aggregate_claim_count": 1,
+            "final_response_claim_count": 1,
+            "duplicate_command_calls": 0,
+            "native_mcp_invoker_advertised": true,
+            "initialization_seconds": 3.669,
+            "command_categories_heuristic": {
+              "git": 2,
+              "tests": 2,
+              "other": 3
+            },
+            "tools": {
+              "run_command": {
+                "calls": 7,
+                "errors": 0,
+                "output_bytes": 7034,
+                "duration_seconds": 9.379
+              },
+              "view_file": {
+                "calls": 10,
+                "errors": 3,
+                "output_bytes": 136,
+                "duration_seconds": 0.398
+              },
+              "write_to_file": {
+                "calls": 3,
+                "errors": 0,
+                "output_bytes": 0,
+                "duration_seconds": 0.346
+              },
+              "other": {
+                "calls": 1,
+                "errors": 0,
+                "output_bytes": 310,
+                "duration_seconds": 0.07
+              },
+              "replace_file_content": {
+                "calls": 2,
+                "errors": 0,
+                "output_bytes": 0,
+                "duration_seconds": 0.263
+              },
+              "send_message": {
+                "calls": 1,
+                "errors": 0,
+                "output_bytes": 55,
+                "duration_seconds": 0.043
+              }
+            }
+          }
+        },
+        {
+          "turn": 2,
+          "status": "SUCCESS",
+          "route": "IMPLEMENT",
+          "duration_seconds": 254.799,
+          "usage": {
+            "input_tokens": 259417,
+            "output_tokens": 36259,
+            "thinking_tokens": 19665,
+            "cache_read_tokens": 2330088,
+            "total_tokens": 295676
+          },
+          "event_diagnostics": {
+            "response_source": "last_completed_agent_response_step",
+            "agent_response_steps": 18,
+            "subagent_steps": 0,
+            "errored_steps": 0,
+            "aggregate_claim_count": 1,
+            "final_response_claim_count": 1,
+            "duplicate_command_calls": 0,
+            "native_mcp_invoker_advertised": true,
+            "initialization_seconds": 2.863,
+            "command_categories_heuristic": {
+              "tests": 1,
+              "git": 1
+            },
+            "tools": {
+              "view_file": {
+                "calls": 5,
+                "errors": 0,
+                "output_bytes": 101,
+                "duration_seconds": 0.303
+              },
+              "write_to_file": {
+                "calls": 3,
+                "errors": 0,
+                "output_bytes": 0,
+                "duration_seconds": 0.327
+              },
+              "other": {
+                "calls": 1,
+                "errors": 0,
+                "output_bytes": 307,
+                "duration_seconds": 0.051
+              },
+              "send_message": {
+                "calls": 2,
+                "errors": 0,
+                "output_bytes": 110,
+                "duration_seconds": 0.065
+              },
+              "replace_file_content": {
+                "calls": 2,
+                "errors": 0,
+                "output_bytes": 0,
+                "duration_seconds": 0.231
+              },
+              "run_command": {
+                "calls": 2,
+                "errors": 0,
+                "output_bytes": 6725,
+                "duration_seconds": 0.626
+              }
+            }
+          }
+        },
+        {
+          "turn": 3,
+          "status": "SUCCESS",
+          "route": "IMPLEMENT",
+          "duration_seconds": 302.601,
+          "usage": {
+            "input_tokens": 387297,
+            "output_tokens": 56117,
+            "thinking_tokens": 28771,
+            "cache_read_tokens": 5273146,
+            "total_tokens": 443414
+          },
+          "event_diagnostics": {
+            "response_source": "last_completed_agent_response_step",
+            "agent_response_steps": 23,
+            "subagent_steps": 0,
+            "errored_steps": 0,
+            "aggregate_claim_count": 1,
+            "final_response_claim_count": 1,
+            "duplicate_command_calls": 0,
+            "native_mcp_invoker_advertised": true,
+            "initialization_seconds": 3.596,
+            "command_categories_heuristic": {
+              "other": 4,
+              "tests": 1,
+              "git": 1
+            },
+            "tools": {
+              "run_command": {
+                "calls": 6,
+                "errors": 0,
+                "output_bytes": 8305,
+                "duration_seconds": 1.701
+              },
+              "view_file": {
+                "calls": 5,
+                "errors": 0,
+                "output_bytes": 110,
+                "duration_seconds": 0.324
+              },
+              "write_to_file": {
+                "calls": 3,
+                "errors": 0,
+                "output_bytes": 0,
+                "duration_seconds": 0.633
+              },
+              "other": {
+                "calls": 1,
+                "errors": 0,
+                "output_bytes": 307,
+                "duration_seconds": 0.08
+              },
+              "send_message": {
+                "calls": 2,
+                "errors": 0,
+                "output_bytes": 110,
+                "duration_seconds": 0.098
+              },
+              "replace_file_content": {
+                "calls": 3,
+                "errors": 0,
+                "output_bytes": 0,
+                "duration_seconds": 0.446
+              }
+            }
+          }
+        },
+        {
+          "turn": 4,
+          "status": "SUCCESS",
+          "route": "IMPLEMENT",
+          "duration_seconds": 229.781,
+          "usage": {
+            "input_tokens": 481132,
+            "output_tokens": 70862,
+            "thinking_tokens": 33027,
+            "cache_read_tokens": 8325192,
+            "total_tokens": 551994
+          },
+          "event_diagnostics": {
+            "response_source": "last_completed_agent_response_step",
+            "agent_response_steps": 18,
+            "subagent_steps": 0,
+            "errored_steps": 0,
+            "aggregate_claim_count": 1,
+            "final_response_claim_count": 1,
+            "duplicate_command_calls": 0,
+            "native_mcp_invoker_advertised": true,
+            "initialization_seconds": 2.757,
+            "command_categories_heuristic": {
+              "other": 1,
+              "tests": 1,
+              "git": 1
+            },
+            "tools": {
+              "view_file": {
+                "calls": 4,
+                "errors": 0,
+                "output_bytes": 82,
+                "duration_seconds": 0.772
+              },
+              "run_command": {
+                "calls": 3,
+                "errors": 0,
+                "output_bytes": 9402,
+                "duration_seconds": 1.083
+              },
+              "write_to_file": {
+                "calls": 3,
+                "errors": 0,
+                "output_bytes": 0,
+                "duration_seconds": 0.439
+              },
+              "other": {
+                "calls": 1,
+                "errors": 0,
+                "output_bytes": 307,
+                "duration_seconds": 1.332
+              },
+              "send_message": {
+                "calls": 2,
+                "errors": 0,
+                "output_bytes": 110,
+                "duration_seconds": 0.173
+              },
+              "replace_file_content": {
+                "calls": 2,
+                "errors": 0,
+                "output_bytes": 0,
+                "duration_seconds": 3.41
+              }
+            }
+          }
+        }
+      ],
+      "scope_error": null,
+      "success": true,
+      "wall_duration_seconds": 1103.432,
+      "build": {
+        "behavior_sha256": "8603d7b719515b2534727b5e01cbbe742a1029a955c9c8a741d7cf3f07a9fc59",
+        "runtime": {
+          "lifecycle_guard.py": "a991241467db9e064533ce4b82a75edf88d1799c3023c36c62abb8d6d5cc3ba9",
+          "verification_gate.py": "01d03c2254579d5411e7175f8b2e641f22d385f8a20dba75a884ea14bcb3869e"
+        },
+        "eval_runner_sha256": "ae5aa45dbeeaf7be8c6f6a57429b80fd392edff785fc28596198a8f2524a9422"
+      },
+      "per_turn_deadline_seconds": 1800
+    },
+    "same_conversation_validated": true,
+    "workflow_reminders": 0,
+    "automatic_continuations": 0,
+    "final_usage_cumulative": {
+      "input_tokens": 481132,
+      "output_tokens": 70862,
+      "thinking_tokens": 33027,
+      "cache_read_tokens": 8325192,
+      "total_tokens": 551994
+    }
+  },
+  "simulated_mcp_selection": {
+    "result": {
+      "event": "quality_score",
+      "case": "mcp-adaptive-selection-simulated",
+      "route": "REVIEW_ONLY",
+      "passed": 5,
+      "total": 5,
+      "coverage": 1.0,
+      "criteria": [
+        {
+          "id": "local_symbol",
+          "description": "Select an available tool appropriate for local symbol.",
+          "status": "passed"
+        },
+        {
+          "id": "framework_api",
+          "description": "Select an available tool appropriate for framework api.",
+          "status": "passed"
+        },
+        {
+          "id": "production_error",
+          "description": "Select an available tool appropriate for production error.",
+          "status": "passed"
+        },
+        {
+          "id": "rendered_page",
+          "description": "Select an available tool appropriate for rendered page.",
+          "status": "passed"
+        },
+        {
+          "id": "sentry_unavailable",
+          "description": "Select an available tool appropriate for sentry unavailable.",
+          "status": "passed"
+        }
+      ],
+      "claimed": null,
+      "completion_claim_error": null,
+      "false_complete": false,
+      "evidence_kind": "simulated_selection",
+      "public_verification": "not_required",
+      "turns": 1,
+      "model": "gemini-3.8-flash-high",
+      "session_mode": "process-events",
+      "response_contract_error": null,
+      "turn_summaries": [
+        {
+          "turn": 1,
+          "status": "SUCCESS",
+          "route": "REVIEW_ONLY",
+          "duration_seconds": 31.835,
+          "usage": {
+            "input_tokens": 18099,
+            "output_tokens": 3625,
+            "thinking_tokens": 3511,
+            "cache_read_tokens": 0,
+            "total_tokens": 21724
+          },
+          "event_diagnostics": {
+            "response_source": "last_completed_agent_response_step",
+            "agent_response_steps": 1,
+            "subagent_steps": 0,
+            "errored_steps": 0,
+            "aggregate_claim_count": 0,
+            "final_response_claim_count": 0,
+            "duplicate_command_calls": 0,
+            "native_mcp_invoker_advertised": true,
+            "initialization_seconds": 2.839,
+            "command_categories_heuristic": {},
+            "tools": {}
+          }
+        }
+      ],
+      "scope_error": null,
+      "success": true,
+      "wall_duration_seconds": 32.249,
+      "build": {
+        "behavior_sha256": "8603d7b719515b2534727b5e01cbbe742a1029a955c9c8a741d7cf3f07a9fc59",
+        "runtime": {
+          "lifecycle_guard.py": "a991241467db9e064533ce4b82a75edf88d1799c3023c36c62abb8d6d5cc3ba9",
+          "verification_gate.py": "01d03c2254579d5411e7175f8b2e641f22d385f8a20dba75a884ea14bcb3869e"
+        },
+        "eval_runner_sha256": "ae5aa45dbeeaf7be8c6f6a57429b80fd392edff785fc28596198a8f2524a9422"
+      },
+      "per_turn_deadline_seconds": 1800
+    },
+    "evidence_kind": "simulated_selection_not_execution"
+  },
+  "interactive_mcp_probe": {
+    "event": "native_mcp_interactive_eval",
+    "model": "gemini-3.8-flash-high",
+    "cli_version": "1.3.3",
+    "behavior_sha256": "8603d7b719515b2534727b5e01cbbe742a1029a955c9c8a741d7cf3f07a9fc59",
+    "operator_model_tool_hints": 0,
+    "operator_startup_diagnostics": [
+      "read-only /agents confirmed Default agent",
+      "read-only /mcp observed Playwright ready before prompt"
+    ],
+    "one_time_approvals": [
+      {
+        "tool": "browser_navigate",
+        "one_time": true
+      },
+      {
+        "tool": "browser_snapshot",
+        "one_time": true
+      },
+      {
+        "tool": "browser_click",
+        "one_time": true
+      },
+      {
+        "tool": "browser_snapshot",
+        "one_time": true
+      }
+    ],
+    "global_permissions_changed": false,
+    "native_ask_preserved": true,
+    "native_dispatch_proven": true,
+    "dispatcher_unknown_tool_observed": false,
+    "selector_engine_error_observed": false,
+    "initial_text_correct_in_final_report": true,
+    "confirmation_correct_in_final_report": true,
+    "browser_page_hit": true,
+    "browser_confirmation_hit": true,
+    "route_observed": null,
+    "harness_status_line_present": false,
+    "latency_comparable": false,
+    "observation_seconds": 338.336,
+    "limitations": [
+      "Startup readiness was inspected by operator before prompt; not a cold-start autonomous-initialization test.",
+      "Model omitted Harness status line; probe proves rendered behavior/native execution, not harness route compliance.",
+      "Time includes operator startup and Ask waits; excluded from workflow latency comparison."
+    ],
+    "behavior_passed": true
+  },
+  "earlier_installed_probes": {
+    "native_mcp": {
+      "event": "native_mcp_interactive_eval",
+      "model": "gemini-3.8-flash-high",
+      "cli_version": "1.3.3",
+      "build": {
+        "behavior_sha256": "d56df5ca2d319dddedf811b68f44efcc11e60df7838804ec03bce0f194005d82",
+        "runtime": {
+          "lifecycle_guard.py": "572a34717e74349cd5f97d5e9d8578b10e8922cc5cd829b3d9b77da8ee0f0708",
+          "verification_gate.py": "40f6e771811347bb3020fa0fa1979654c1ce693770e38403fab17b0c1ca30932"
+        },
+        "eval_runner_sha256": "8047f2060f54261a2cccf841c382acde15fcd457b274bb3525b7668b4466f1dd"
+      },
+      "operator_model_tool_hints": 0,
+      "operator_startup_diagnostics": [
+        "read-only /agents confirmed Default agent",
+        "read-only /mcp observed Playwright ready before prompt"
+      ],
+      "one_time_approvals": [
+        {
+          "tool": "browser_navigate",
+          "one_time": true
+        },
+        {
+          "tool": "browser_snapshot",
+          "one_time": true
+        },
+        {
+          "tool": "browser_click",
+          "one_time": true
+        },
+        {
+          "tool": "browser_click",
+          "one_time": true
+        },
+        {
+          "tool": "browser_snapshot",
+          "one_time": true
+        },
+        {
+          "tool": "browser_close",
+          "one_time": true
+        }
+      ],
+      "global_permissions_changed": false,
+      "native_ask_preserved": true,
+      "native_dispatch_proven": true,
+      "observed_tools": [
+        "browser_navigate",
+        "browser_snapshot",
+        "browser_click",
+        "browser_click",
+        "browser_snapshot",
+        "browser_close"
+      ],
+      "recoverable_tool_errors": [
+        {
+          "tool": "browser_click",
+          "error": "Unknown engine ref while parsing selector",
+          "recovered": true
+        }
+      ],
+      "dispatcher_unknown_tool_observed": false,
+      "initial_text_correct": true,
+      "confirmation_correct_in_final_report": true,
+      "browser_page_hit": true,
+      "browser_confirmation_hit": true,
+      "route_observed": "DIRECT",
+      "behavior_passed": true,
+      "latency_comparable": false,
+      "latency_note": "Includes operator startup inspection and individual Ask approval waits; excluded from workflow latency comparison.",
+      "observation_seconds": 462.65,
+      "limitations": [
+        "Native dispatch and rendered interaction succeeded in this session, after operator verified startup readiness.",
+        "Zero model tool hints does not establish cold-start initialization without operator inspection.",
+        "This probe does not prove required harness worker routing; the model reported DIRECT.",
+        "Source policy and startup conditions both changed; cannot attribute recovery solely to policy."
+      ]
+    },
+    "stop_final_response": {
+      "event": "final_response_step_probe",
+      "final_sentinel_present": true,
+      "draft_absent": true,
+      "summaries": [
+        {
+          "turn": 1,
+          "status": "SUCCESS",
+          "route": "DIRECT",
+          "duration_seconds": 22.664,
+          "usage": {
+            "input_tokens": 21225,
+            "output_tokens": 1460,
+            "thinking_tokens": 1439,
+            "cache_read_tokens": 16139,
+            "total_tokens": 22685
+          },
+          "event_diagnostics": {
+            "response_source": "last_completed_agent_response_step",
+            "agent_response_steps": 2,
+            "aggregate_claim_count": 0,
+            "final_response_claim_count": 0,
+            "native_mcp_invoker_advertised": true,
+            "initialization_seconds": 3.846,
+            "duplicate_command_calls": 0,
+            "tools": {}
+          }
+        }
+      ],
+      "wall_seconds": 22.686
+    },
+    "native_error_recovery": {
+      "event": "native_error_step_probe",
+      "recovery_reported": true,
+      "summaries": [
+        {
+          "turn": 1,
+          "status": "SUCCESS",
+          "route": null,
+          "duration_seconds": 23.239,
+          "usage": {
+            "input_tokens": 21193,
+            "output_tokens": 690,
+            "thinking_tokens": 488,
+            "cache_read_tokens": 16768,
+            "total_tokens": 21883
+          },
+          "event_diagnostics": {
+            "response_source": "last_completed_agent_response_step",
+            "agent_response_steps": 2,
+            "errored_steps": 1,
+            "aggregate_claim_count": 0,
+            "final_response_claim_count": 0,
+            "native_mcp_invoker_advertised": true,
+            "initialization_seconds": 5.387,
+            "duplicate_command_calls": 0,
+            "tools": {
+              "view_file": {
+                "calls": 1,
+                "errors": 1,
+                "output_bytes": 0,
+                "duration_seconds": 0.236
+              }
+            }
+          }
+        }
+      ],
+      "wall_seconds": 23.246
+    },
+    "native_subagent": {
+      "event": "native_subagent_step_probe",
+      "completed": true,
+      "subagent_step_observed": true,
+      "summaries": [
+        {
+          "turn": 1,
+          "status": "SUCCESS",
+          "route": null,
+          "duration_seconds": 59.675,
+          "usage": {
+            "input_tokens": 24942,
+            "output_tokens": 805,
+            "thinking_tokens": 654,
+            "cache_read_tokens": 33098,
+            "total_tokens": 25747
+          },
+          "event_diagnostics": {
+            "response_source": "last_completed_agent_response_step",
+            "agent_response_steps": 3,
+            "subagent_steps": 1,
+            "errored_steps": 0,
+            "aggregate_claim_count": 0,
+            "final_response_claim_count": 0,
+            "native_mcp_invoker_advertised": true,
+            "initialization_seconds": 3.768,
+            "duplicate_command_calls": 0,
+            "tools": {}
+          }
+        }
+      ],
+      "wall_seconds": 59.682,
+      "passed": true
+    },
+    "build_note": "These probes preceded the final installed 8603 behavior; they are not final-build four-turn evidence."
+  },
+  "native_protocol_evidence": {
+    "public_cli_binary_sha256": "96dd362d5583c60485f5277fa64e43dd64c3ff02a2bf109fd683b99777da370d",
+    "observed_states": [
+      "ACTIVE",
+      "DONE",
+      "ERROR"
+    ],
+    "observed_promotion": {
+      "previous_kind": "tool",
+      "next_kind": "subagent",
+      "previous_state": "ACTIVE",
+      "next_state": "DONE",
+      "has_text": false,
+      "has_subagent": true
+    },
+    "historical_error_attribution": "Exact cause of earlier full-attempt metadata errors is unknown because failing frames were not retained."
+  },
+  "partial_diagnostics": [
+    {
+      "event": "partial_quality_diagnostic",
+      "success": false,
+      "scored_completion": false,
+      "operator_interrupted": true,
+      "reason": "Operator stopped after the first completed turn to investigate latency. Local main commands took 21.866 seconds of 921.322 seconds wall time; the remainder is not attributed to a specific cause. No four-turn score.",
+      "turn_summaries": [
+        {
+          "turn": 1,
+          "status": "SUCCESS",
+          "route": "IMPLEMENT",
+          "duration_seconds": 921.322,
+          "usage": {
+            "input_tokens": 492702,
+            "output_tokens": 54080,
+            "thinking_tokens": 33283,
+            "cache_read_tokens": 5274263,
+            "total_tokens": 546782
+          },
+          "event_diagnostics": {
+            "response_source": "last_completed_agent_response_step",
+            "agent_response_steps": 72,
+            "subagent_steps": 2,
+            "errored_steps": 2,
+            "aggregate_claim_count": 1,
+            "final_response_claim_count": 1,
+            "native_mcp_invoker_advertised": true,
+            "initialization_seconds": 4.995,
+            "duplicate_command_calls": 11,
+            "tools": {
+              "run_command": {
+                "calls": 51,
+                "errors": 0,
+                "output_bytes": 80038,
+                "duration_seconds": 21.866
+              },
+              "view_file": {
+                "calls": 10,
+                "errors": 1,
+                "output_bytes": 185,
+                "duration_seconds": 0.795
+              },
+              "write_to_file": {
+                "calls": 4,
+                "errors": 1,
+                "output_bytes": 0,
+                "duration_seconds": 0.406
+              },
+              "invoke_subagent": {
+                "calls": 1,
+                "errors": 0,
+                "output_bytes": 0,
+                "duration_seconds": 0.265
+              },
+              "send_message": {
+                "calls": 1,
+                "errors": 0,
+                "output_bytes": 55,
+                "duration_seconds": 0.042
+              }
+            }
+          }
+        }
+      ],
+      "last_heartbeat": {
+        "turn": 2,
+        "completed_tool_steps": 6,
+        "completed_response_steps": 10,
+        "wall_seconds": 1049.575
+      },
+      "build": {
+        "behavior_sha256": "d56df5ca2d319dddedf811b68f44efcc11e60df7838804ec03bce0f194005d82",
+        "runtime": {
+          "lifecycle_guard.py": "572a34717e74349cd5f97d5e9d8578b10e8922cc5cd829b3d9b77da8ee0f0708",
+          "verification_gate.py": "40f6e771811347bb3020fa0fa1979654c1ce693770e38403fab17b0c1ca30932"
+        },
+        "eval_runner_sha256": "cc9477825e3c2144aa087ee73bfc5f4a3085b16f142ab0415547d5cb29f44cc6"
+      }
+    },
+    {
+      "event": "partial_quality_diagnostic",
+      "success": false,
+      "scored_completion": false,
+      "operator_interrupted": true,
+      "reason": "Stopped before first turn completed to fix independently reproduced false-completion and privacy gaps in eval observer. This run has no completed four-turn score.",
+      "last_heartbeat": {
+        "turn": 1,
+        "completed_tool_steps": 29,
+        "completed_response_steps": 29,
+        "wall_seconds": 209.872
+      },
+      "build": {
+        "behavior_sha256": "8603d7b719515b2534727b5e01cbbe742a1029a955c9c8a741d7cf3f07a9fc59",
+        "runtime": {
+          "lifecycle_guard.py": "a991241467db9e064533ce4b82a75edf88d1799c3023c36c62abb8d6d5cc3ba9",
+          "verification_gate.py": "01d03c2254579d5411e7175f8b2e641f22d385f8a20dba75a884ea14bcb3869e"
+        },
+        "eval_runner_sha256": "87d97a9731f57a03dce58145811e810694457f33f578fe37011714067dab0c64"
+      }
+    }
+  ],
+  "baseline": {
+    "artifact": "2026-10-12-live.json",
+    "behavior_passed": 8,
+    "behavior_total": 8,
+    "success": true,
+    "wall_seconds_approximate": 1740,
+    "final_usage_cumulative": {
+      "input_tokens": 1410072,
+      "output_tokens": 94574,
+      "thinking_tokens": 59927,
+      "cache_read_tokens": 23539714,
+      "total_tokens": 1504646
+    }
+  },
+  "previous": {
+    "artifact": "2026-10-12-optimized.json",
+    "behavior_passed": 8,
+    "behavior_total": 8,
+    "success": false,
+    "wall_seconds": 2184.796,
+    "final_usage_cumulative": {
+      "input_tokens": 2097484,
+      "output_tokens": 115929,
+      "thinking_tokens": 51205,
+      "cache_read_tokens": 19327057,
+      "total_tokens": 2213413
+    }
+  },
+  "limitations": [
+    "Each configuration has one complete four-turn sample; provider/cache/model variance is uncontrolled.",
+    "Baseline wall time is approximate; runner observation changed from aggregate JSON to public response-step NDJSON.",
+    "Historical aggregate-claim failure is retained; raw evidence does not establish its exact historical cause.",
+    "Usage counters are cumulative; use the last turn and do not add cached tokens to total_tokens.",
+    "Command categories are lexical heuristics, not semantic evidence or a causal latency attribution.",
+    "Native browser succeeded after operator startup readiness inspection; not a cold-start initialization proof.",
+    "Final browser model omitted Harness status; native execution success does not prove harness route compliance.",
+    "Simulated MCP selection does not prove external service execution."
+  ],
+  "failed_or_interrupted_earlier_attempts": [
+    {
+      "event": "quality_error",
+      "error_type": "EvalError",
+      "detail": "invalid response-step metadata",
+      "success": false,
+      "wall_duration_seconds": 359.7,
+      "build": {
+        "behavior_sha256": "d56df5ca2d319dddedf811b68f44efcc11e60df7838804ec03bce0f194005d82",
+        "runtime": {
+          "lifecycle_guard.py": "572a34717e74349cd5f97d5e9d8578b10e8922cc5cd829b3d9b77da8ee0f0708",
+          "verification_gate.py": "40f6e771811347bb3020fa0fa1979654c1ce693770e38403fab17b0c1ca30932"
+        },
+        "eval_runner_sha256": "8047f2060f54261a2cccf841c382acde15fcd457b274bb3525b7668b4466f1dd"
+      }
+    },
+    {
+      "event": "quality_diagnostic",
+      "success": false,
+      "operator_interrupted": true,
+      "last_heartbeat": {
+        "turn": 1,
+        "completed_tool_steps": 20,
+        "completed_response_steps": 22,
+        "wall_seconds": 178.773
+      },
+      "build": {
+        "behavior_sha256": "d56df5ca2d319dddedf811b68f44efcc11e60df7838804ec03bce0f194005d82",
+        "runtime": {
+          "lifecycle_guard.py": "572a34717e74349cd5f97d5e9d8578b10e8922cc5cd829b3d9b77da8ee0f0708",
+          "verification_gate.py": "40f6e771811347bb3020fa0fa1979654c1ce693770e38403fab17b0c1ca30932"
+        },
+        "eval_runner_sha256": "fbe62e3bd9043cbcdc5dd8ac7a41c736bbef56f6ca61b3e853a3dd7f2f4405f9"
+      }
+    },
+    {
+      "event": "quality_error",
+      "error_type": "EvalError",
+      "detail": "conflicting or repeated completed step",
+      "success": false,
+      "wall_duration_seconds": 212.921,
+      "build": {
+        "behavior_sha256": "d56df5ca2d319dddedf811b68f44efcc11e60df7838804ec03bce0f194005d82",
+        "runtime": {
+          "lifecycle_guard.py": "572a34717e74349cd5f97d5e9d8578b10e8922cc5cd829b3d9b77da8ee0f0708",
+          "verification_gate.py": "40f6e771811347bb3020fa0fa1979654c1ce693770e38403fab17b0c1ca30932"
+        },
+        "eval_runner_sha256": "88eac70396e5c21e63af1b433f6a32b79b8bd5c0562b459ee9bc3f93e64991f0"
+      }
+    }
+  ],
+  "comparison": {
+    "total_tokens_change_vs_previous_percent": -75.061,
+    "total_tokens_change_vs_baseline_percent": -63.314,
+    "wall_change_vs_previous_percent": -49.495
+  }
+}

@@ -64,10 +64,10 @@ jobs:
           ./tests/test-source.sh
           python3 -m unittest -v tests/test_verification_gate.py tests/test_lifecycle_guard.py
 
-      - name: Run Windows lifecycle and verification hook tests
+      - name: Run Windows lifecycle, completion, and output quality tests
         if: runner.os == 'Windows'
         shell: pwsh
-        run: python -m unittest -v tests/test_verification_gate.py tests/test_lifecycle_guard.py
+        run: python -m unittest -v tests/test_verification_gate.py tests/test_lifecycle_guard.py tests/test_task_completion.py tests/test_multiturn_completion.py tests/test_output_quality_evals.py tests/test_policy.py
 
       - name: Run Windows installer fixture checks
         if: runner.os == 'Windows'

@@ -1,4 +1,5 @@
 .DS_Store
 .harness-eval.*
+.playwright-mcp/
 __pycache__/
 docs/local-audit.md
