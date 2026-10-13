@@ -55,9 +55,9 @@ hooks = json.loads((root / "plugin/codex-claude-harness/hooks.json").read_text(e
 if "SessionStart" in json.dumps(hooks):
     raise SystemExit("project context must use supported PreInvocation, not SessionStart")
 if hooks.get("security-gate", {}).get("PreToolUse", [{}])[0].get("matcher") != (
-    "write_to_file|replace_file_content|multi_replace_file_content|run_command"
+    "write_to_file|replace_file_content|multi_replace_file_content|run_command|call_mcp_tool"
 ):
-    raise SystemExit("security gate must inspect every write and terminal tool")
+    raise SystemExit("security gate must inspect every write, terminal, and MCP tool")
 if "PreInvocation" not in hooks.get("project-context", {}):
     raise SystemExit("bounded project context must run through PreInvocation")
 if hooks.get("auto-format", {}).get("PostToolUse", [{}])[0].get("matcher") != (
@@ -431,6 +431,8 @@ grep -Fq -- '- Keep this line.' "${policy_target}" || fail 'installer removed ex
   fail 'installer duplicated the managed policy end marker'
 grep -Fq '# Automatic engineering harness' "${policy_target}" || \
   fail 'installer did not add the managed policy'
+grep -Fq -- '- Keep this line.' "${policy_target}.bak" || \
+  fail 'installer did not keep a backup of the existing user policy'
 [[ ! -e "${installed_plugin}/mcp_config.json" ]] || \
   fail 'core-only installer left a stale enabled MCP config in the installed plugin'
 runtime_marker="${installed_plugin}/scripts/.python-runtime"

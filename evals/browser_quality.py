@@ -7,6 +7,7 @@ The operator launches a fresh first-party session and approves scoped calls once
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import pathlib
 import re
@@ -29,6 +30,9 @@ def prompt_for(url):
 class BrowserProbe:
     def __init__(self, state_path=None):
         self.token = "CONFIRM-" + secrets.token_hex(12)
+        self.nonce = secrets.token_hex(8)
+        self.expected_proof = base64.b64encode(
+            ("%s:click" % self.nonce).encode()).decode()
         self.hits = []
         self.state_path = pathlib.Path(state_path) if state_path else None
         self.lock = threading.Lock()
@@ -36,19 +40,37 @@ class BrowserProbe:
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
+                # The confirmation endpoint only releases the token to a request
+                # carrying the JS-computed proof header, so a bare HTTP client
+                # cannot pass the interaction checks without running page script.
+                js_bound = None
+                if self.path == "/confirmation":
+                    proof = self.headers.get("X-Confirm-Proof", "")
+                    js_bound = secrets.compare_digest(proof, probe.expected_proof)
                 with probe.lock:
-                    probe.hits.append({"path": self.path,
-                                       "browser": "Chrome" in self.headers.get("User-Agent", "")})
+                    hit = {"path": self.path,
+                           "browser": "Chrome" in self.headers.get("User-Agent", "")}
+                    if js_bound is not None:
+                        hit["js_bound"] = js_bound
+                    probe.hits.append(hit)
                     probe.save_state()
                 if self.path == "/":
-                    body = b'''<!doctype html><html><head><title>Registration QA</title></head>
+                    body = ('''<!doctype html><html><head><title>Registration QA</title></head>
 <body><h1>Registration status</h1><p id="status">Waiting for confirmation</p>
 <button id="confirm">Confirm registration</button><script>
+const NONCE = "%s";
 document.getElementById('confirm').onclick = async () => {
- document.getElementById('status').textContent = (await (await fetch('/confirmation')).json()).confirmation;
-};</script></body></html>'''
+ const response = await fetch('/confirmation', {headers: {'X-Confirm-Proof': btoa(NONCE + ':click')}});
+ if (response.ok) {
+  document.getElementById('status').textContent = (await response.json()).confirmation;
+ }
+};</script></body></html>''' % probe.nonce).encode()
                     kind = "text/html; charset=utf-8"
                 elif self.path == "/confirmation":
+                    if not js_bound:
+                        self.send_response(403)
+                        self.end_headers()
+                        return
                     body = json.dumps({"confirmation": probe.token}).encode()
                     kind = "application/json"
                 else:
@@ -109,7 +131,7 @@ def score_report(report, token, hits):
         "initial_text_correct": "Waiting for confirmation" in joined,
         "confirmation_correct": token in joined,
         "browser_page_hit": any(h.get("path") == "/" and h.get("browser") is True for h in hits),
-        "browser_confirmation_hit": any(h.get("path") == "/confirmation" and h.get("browser") is True for h in hits),
+        "confirmation_js_bound": any(h.get("path") == "/confirmation" and h.get("js_bound") is True for h in hits),
         "harness_status_valid": status_valid,
     }
     return {"event": "native_browser_quality_score", **checks,

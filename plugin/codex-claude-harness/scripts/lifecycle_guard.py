@@ -199,6 +199,33 @@ def _write_content(name: str, args: Dict[str, Any]) -> str:
     raise ScanIncomplete("unsupported write tool")
 
 
+def _mcp_scan_lines(value: Any, key: str = "") -> Iterator[str]:
+    """Yield key="value" lines for string leaves so assignment-style
+    patterns apply to structured MCP arguments, not only raw text."""
+    if isinstance(value, dict):
+        for child_key, child in value.items():
+            yield from _mcp_scan_lines(child, str(child_key))
+    elif isinstance(value, list):
+        for child in value:
+            yield from _mcp_scan_lines(child, key)
+    elif isinstance(value, str):
+        yield '%s="%s"' % (key or "value", value)
+
+
+def _mcp_content(args: Dict[str, Any]) -> str:
+    """Serialize an MCP tool call for bounded content scanning.
+
+    Server and tool names are identifiers; the egress risk lives in the
+    argument values, so the raw payload is scanned alongside a flattened
+    assignment view of `Arguments`.
+    """
+    try:
+        serialized = json.dumps(args, ensure_ascii=False, sort_keys=True)
+    except (ValueError, TypeError):
+        raise ScanIncomplete("unserializable MCP arguments")
+    return _bounded_join([serialized, *_mcp_scan_lines(args.get("Arguments"))])
+
+
 def _has_plausible_private_key(text: str) -> bool:
     for match in _PRIVATE_KEY_BLOCK.finditer(text):
         body_lines = []
@@ -693,6 +720,18 @@ def _security_decision(payload: Dict[str, Any]) -> Dict[str, str]:
             return {
                 "decision": "force_ask",
                 "reason": "DLP found possible credential material; review the destination and content before proceeding.",
+            }
+        return _normal_permission_review()
+
+    if name == "call_mcp_tool":
+        content = _mcp_content(args)
+        category = _high_confidence_category(content)
+        if category:
+            return {"decision": "deny", "reason": "DLP blocked high-confidence %s in an MCP tool call." % category}
+        if _has_ambiguous_secret(content):
+            return {
+                "decision": "force_ask",
+                "reason": "DLP found possible credential material in an MCP tool call; review the destination server and arguments before proceeding.",
             }
         return _normal_permission_review()
 

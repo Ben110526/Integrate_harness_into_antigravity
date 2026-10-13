@@ -217,7 +217,7 @@ external actions and MCP calls.
 - 🗄️ `harness-db-architect`: Reviews database schemas, indexes, locks, and safe zero-downtime migrations.
 
 ### 4 Lifecycle Hooks
-- 🔒 **DLP PreToolUse**: Blocks leaks of private keys, tokens, and sensitive `.env` files before tool calls.
+- 🔒 **DLP PreToolUse**: Blocks leaks of private keys, tokens, and sensitive `.env` files before write, terminal, and MCP tool calls.
 - 🗺️ **Context PreInvocation**: Injects a compact, bounded architectural blueprint on the first turn.
 - 🎨 **Auto-Format PostToolUse**: Automatically formats edited files when enabled (`HARNESS_AUTO_FORMAT=1`).
 - 🚦 **Verification & Grounding Gate (Stop)**: Checks post-write evidence, cumulative task/review consistency and cited file paths/line ranges. It cannot prove semantic coverage or test relevance.

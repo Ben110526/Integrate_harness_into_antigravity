@@ -1,4 +1,4 @@
-﻿param(
+param(
     [Alias("config")]
     [string]$ConfigPath,
 
@@ -387,7 +387,22 @@ if ($preservedPolicy) {
     $mergedPolicy = $managedPolicy + [Environment]::NewLine
 }
 $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
-[System.IO.File]::WriteAllText($policyTarget, $mergedPolicy, $utf8WithoutBom)
+# Write to a same-directory temp file first, then atomically swap it in while
+# keeping a .bak of the previous policy, so an interrupt cannot truncate user content.
+$policyTempPath = Join-Path $policyDirectory ("GEMINI.md.tmp-" + [Guid]::NewGuid().ToString("N"))
+try {
+    [System.IO.File]::WriteAllText($policyTempPath, $mergedPolicy, $utf8WithoutBom)
+    if (Test-Path $policyTarget -PathType Leaf) {
+        [System.IO.File]::Replace($policyTempPath, $policyTarget, $policyTarget + ".bak")
+    } else {
+        [System.IO.File]::Move($policyTempPath, $policyTarget)
+    }
+}
+finally {
+    if (Test-Path $policyTempPath -PathType Leaf) {
+        Remove-Item -Force $policyTempPath
+    }
+}
 
 function Format-ByteSize([long] $Bytes) {
     if ($Bytes -ge 1GB) { return "{0:N2} GB" -f ($Bytes / 1GB) }

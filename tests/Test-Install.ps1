@@ -276,6 +276,10 @@ exit 0
     if ([regex]::Matches($policy, [regex]::Escape("<!-- auto-harness:end -->")).Count -ne 1) { throw "installer duplicated the managed policy end marker" }
     if (-not $policy.Contains("# Automatic engineering harness")) { throw "installer did not add the managed policy" }
 
+    $policyBackup = $policyTarget + ".bak"
+    if (-not (Test-Path $policyBackup -PathType Leaf)) { throw "installer did not keep a backup of the existing user policy" }
+    if (-not ((Get-Content $policyBackup -Raw).Contains("- Keep this line."))) { throw "policy backup lost existing user content" }
+
     Write-Host "[ok] PowerShell installer configuration and fallback checks passed"
 }
 finally {

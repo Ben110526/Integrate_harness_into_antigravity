@@ -257,6 +257,23 @@ class TaskCompletionTests(unittest.TestCase):
                 rows = [self.row(status="unverified", evidence=[], reason="No runnable behavioral check is available.")]
                 self.assertAllows(self.finish(status=status, rows=rows))
 
+    def test_partial_without_any_verification_attempt_warns_visibly(self):
+        self.register()
+        self.write(step=3)
+        rows = [self.row(status="unverified", evidence=[], reason="No runnable behavioral check is available.")]
+        result = self.finish(status="partial", rows=rows)
+        self.assertEqual(result["decision"], "allow", result)
+        self.assertIn("without any verification attempt", result.get("reason", ""))
+
+    def test_partial_after_a_failed_attempt_does_not_warn(self):
+        self.register()
+        self.write(step=3)
+        self.command(4, "python3 -m pytest -q", error="failed")
+        rows = [self.row(status="unverified", evidence=[], reason="Tests fail on the current state.")]
+        result = self.finish(status="partial", rows=rows)
+        self.assertEqual(result["decision"], "allow", result)
+        self.assertNotIn("without any verification attempt", result.get("reason", ""))
+
     def test_partial_requires_reason_for_every_unpassed_requirement(self):
         self.prepared()
         self.assertContinues(self.finish(status="partial", rows=[self.row(status="unverified", evidence=[])]))

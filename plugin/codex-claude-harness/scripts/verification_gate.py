@@ -2453,6 +2453,21 @@ def _handle_stop(payload: dict[str, Any]) -> None:
                 warnings.append(
                     "Verification is still missing; allowing stop after one reminder to avoid a loop."
                 )
+        elif completion in {"partial", "blocked"} and isinstance(behavioral_write_step, int):
+            # A truthful incomplete result may finish, but not silently: a logic
+            # write with zero verification attempts (not even a failed check or
+            # an explicit waiver) must surface as a visible limitation.
+            attempted = has_behavioral_evidence or any(
+                isinstance(item, dict) and type(item.get("step")) is int
+                and item["step"] >= behavioral_write_step
+                for item in state.get("checkEvents", [])
+            )
+            if not attempted:
+                warnings.append(
+                    "Partial/blocked was accepted without any verification attempt after the "
+                    "latest logic write; even a failed check or an explicit "
+                    f"`{NO_CHECK_MARKER} <reason>` waiver keeps the gap auditable."
+                )
         if state_changed:
             _save_state(path, state)
 

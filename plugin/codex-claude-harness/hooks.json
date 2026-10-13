@@ -2,7 +2,7 @@
   "security-gate": {
     "PreToolUse": [
       {
-        "matcher": "write_to_file|replace_file_content|multi_replace_file_content|run_command",
+        "matcher": "write_to_file|replace_file_content|multi_replace_file_content|run_command|call_mcp_tool",
         "hooks": [
           {
             "type": "command",

@@ -492,7 +492,8 @@ policy_end_marker='<!-- auto-harness:end -->'
 
 printf 'Installing or updating always-on global policy...\n'
 mkdir -p -- "${policy_dir}"
-policy_temp_path="$(mktemp "${TMPDIR:-/tmp}/auto-harness-policy.XXXXXX")"
+# Same-directory temp keeps the final mv an atomic rename on one filesystem.
+policy_temp_path="$(mktemp "${policy_dir}/.auto-harness-policy.XXXXXX")"
 if [[ -f "${policy_target}" ]]; then
   awk -v start="${policy_start_marker}" -v end="${policy_end_marker}" '
     { sub(/\r$/, "") }
@@ -518,6 +519,9 @@ while IFS= read -r policy_line || [[ -n "${policy_line}" ]]; do
   printf '%s\n' "${policy_line}" >> "${policy_temp_path}"
 done < "${policy_source}"
 printf '%s\n' "${policy_end_marker}" >> "${policy_temp_path}"
+if [[ -f "${policy_target}" ]]; then
+  cp -p -- "${policy_target}" "${policy_target}.bak"
+fi
 mv -- "${policy_temp_path}" "${policy_target}"
 policy_temp_path=""
 

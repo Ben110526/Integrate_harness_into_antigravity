@@ -99,7 +99,7 @@ class LifecycleGuardTests(unittest.TestCase):
         hooks = json.loads(HOOKS.read_text(encoding="utf-8"))
         self.assertEqual(
             hooks["security-gate"]["PreToolUse"][0]["matcher"],
-            "write_to_file|replace_file_content|multi_replace_file_content|run_command",
+            "write_to_file|replace_file_content|multi_replace_file_content|run_command|call_mcp_tool",
         )
         self.assertIn("PreInvocation", hooks["project-context"])
         self.assertEqual(
@@ -171,6 +171,54 @@ class LifecycleGuardTests(unittest.TestCase):
                 result = self.security(name, args)
                 self.assertEqual(result["decision"], "force_ask")
                 self.assertNotIn("not-real", result["reason"])
+
+    def test_mcp_tool_calls_are_scanned_for_secret_material(self) -> None:
+        token = "ghp_abcdefghijklmnopqrstuvwxyzABCDEFGHIJ"
+        result = self.security(
+            "call_mcp_tool",
+            {
+                "ServerName": "harness-github",
+                "ToolName": "create_issue",
+                "Arguments": {"title": "leak", "body": token},
+            },
+        )
+        self.assertEqual(result["decision"], "deny")
+        self.assertNotIn(token, json.dumps(result))
+
+    def test_mcp_ambiguous_assignment_forces_review_without_value_leak(self) -> None:
+        result = self.security(
+            "call_mcp_tool",
+            {
+                "ServerName": "harness-sentry",
+                "ToolName": "query",
+                "Arguments": {"client_secret": "plausible-secret-value"},
+            },
+        )
+        self.assertEqual(result["decision"], "force_ask")
+        self.assertNotIn("plausible-secret-value", json.dumps(result))
+
+    def test_clean_mcp_tool_call_uses_normal_ask(self) -> None:
+        self.assert_normal_ask(
+            self.security(
+                "call_mcp_tool",
+                {
+                    "ServerName": "harness-context7",
+                    "ToolName": "get-library-docs",
+                    "Arguments": {"library": "react", "query": "hooks rules"},
+                },
+            )
+        )
+
+    def test_mcp_arguments_beyond_scan_bound_force_review(self) -> None:
+        result = self.security(
+            "call_mcp_tool",
+            {
+                "ServerName": "harness-playwright",
+                "ToolName": "browser_evaluate",
+                "Arguments": {"script": "x" * (256 * 1024)},
+            },
+        )
+        self.assertEqual(result["decision"], "force_ask")
 
     def test_known_tokens_and_aws_secret_are_hard_denied_and_redacted(self) -> None:
         samples = (
