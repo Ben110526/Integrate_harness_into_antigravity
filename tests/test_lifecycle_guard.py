@@ -79,7 +79,7 @@ class LifecycleGuardTests(unittest.TestCase):
         )
 
     def assert_normal_ask(self, result: Dict[str, Any]) -> None:
-        self.assertEqual(result.get("decision"), "ask")
+        self.assertEqual(result.get("decision"), "ask", result.get("reason", ""))
         self.assertNotIn("permissionOverrides", result)
 
     def launcher_fixture(self) -> Path:
@@ -353,9 +353,9 @@ class LifecycleGuardTests(unittest.TestCase):
                 )
                 self.assertEqual(result["decision"], "force_ask")
 
-    def _git(self, *args: str) -> None:
+    def _git(self, *args: str, executable: Optional[Path] = None) -> None:
         subprocess.run(
-            ["git", *args],
+            [str(executable) if executable is not None else "git", *args],
             cwd=str(self.workspace),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -506,10 +506,11 @@ class LifecycleGuardTests(unittest.TestCase):
 
     @unittest.skipIf(os.name == "nt", "compound executable fixture uses POSIX paths")
     def test_commit_executable_is_selected_from_its_shell_segment(self) -> None:
-        self._git("init")
+        trusted_git = self._trusted_git_path()
+        self._git("init", executable=trusted_git)
         safe = self.workspace / "safe.txt"
         safe.write_text("ordinary text\n", encoding="utf-8")
-        self._git("add", "safe.txt")
+        self._git("add", "safe.txt", executable=trusted_git)
         binary_dir = self.base / "compound-bin"
         binary_dir.mkdir()
         marker = self.base / "compound-git-ran"
@@ -520,8 +521,8 @@ class LifecycleGuardTests(unittest.TestCase):
         )
         untrusted_git.chmod(0o755)
 
-        untrusted_commit = "/usr/bin/git status && %s commit -m safe" % sh_quote(
-            str(untrusted_git)
+        untrusted_commit = "%s status && %s commit -m safe" % (
+            sh_quote(str(trusted_git)), sh_quote(str(untrusted_git))
         )
         result = self.security(
             "run_command",
@@ -531,8 +532,8 @@ class LifecycleGuardTests(unittest.TestCase):
         self.assertEqual(result["decision"], "force_ask")
         self.assertFalse(marker.exists())
 
-        trusted_commit = "%s status && /usr/bin/git commit -m safe" % sh_quote(
-            str(untrusted_git)
+        trusted_commit = "%s status && %s commit -m safe" % (
+            sh_quote(str(untrusted_git)), sh_quote(str(trusted_git))
         )
         result = self.security(
             "run_command",

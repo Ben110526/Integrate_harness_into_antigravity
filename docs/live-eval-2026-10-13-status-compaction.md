@@ -35,6 +35,12 @@ Behavior digest không bao gồm runtime Python; vì vậy giữ hash runtime ri
 
 CLI đang dùng là **Antigravity 1.3.4**, public binary SHA-256 `9da414c0624c27aa2969a86030a070b5341c0657700512eba70b21725ce253f5`. Public binary hiện tại có `parentConversationId` và `GetParentConversationId`. Bằng chứng schema ban đầu từ public CLI **1.3.3** có hash `96dd362d5583c60485f5277fa64e43dd64c3ff02a2bf109fd683b99777da370d`; đó là binary khác, không gọi chúng là cùng một bản. Không đọc hoặc chuyển OAuth credentials, private endpoints hay private client configuration để chạy eval.
 
+## CI sau push
+
+CI Linux của commit `dfb46ea` đạt. macOS gặp một failure trong test lifecycle có sẵn `test_commit_executable_is_selected_from_its_shell_segment`: hook trả `force_ask` thay vì `ask`; cùng test chạy local đạt. Fixture khởi tạo repo bằng Git trong PATH nhưng inspect bằng `/usr/bin/git`, là staged-inspection test đầu tiên; cold startup hoặc tải CI vượt giới hạn 3 giây là khả năng, chưa chứng minh root cause. Connector GitHub không được cấp quyền rerun job (403).
+
+Follow-up chỉ chuẩn hóa fixture dùng cùng trusted Git cho setup và inspection; vẫn kiểm tra fake untrusted Git không bị chạy, giữ nguyên assertions và runtime Ask/timeout. Bản installed/live eval không đổi behavior hoặc runtime hash. Không đổi điểm live eval theo kết quả CI. Windows không được sửa trong task này.
+
 ## Hai thử nghiệm MCP từ phiên mới
 
 Cả hai lần dùng `gemini-3.8-flash-high`, process, conversation, project và workspace mới. Prompt tự nhiên yêu cầu đọc initial text trên rendered page, bấm Confirm registration và báo exact confirmation. Prompt không nêu MCP server, tool name, `/mcp` hoặc dòng Harness. Trước prompt không mở inventory/readiness panel, không gửi model tool hint, không chủ động idle để chờ server ready.

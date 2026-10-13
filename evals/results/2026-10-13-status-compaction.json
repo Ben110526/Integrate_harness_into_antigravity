@@ -34,7 +34,20 @@
     "python_tests": 350,
     "python_skipped": 3,
     "node_tests": 15,
-    "source_checks_passed": true
+    "source_checks_passed": true,
+    "initial_push_ci": {
+      "run_id": 38373106459,
+      "source_checks": "success",
+      "macos_checks": "failure",
+      "macos_failed_test": "test_commit_executable_is_selected_from_its_shell_segment",
+      "macos_observed_decision": "force_ask",
+      "macos_expected_decision": "ask",
+      "local_focused_reproduction": "passed",
+      "root_cause_proven": false,
+      "github_rerun_permission": "403 forbidden",
+      "followup_scope": "test fixture uses same trusted git for setup and inspection; runtime permissions and timeout unchanged",
+      "windows": "excluded_by_user"
+    }
   },
   "native_browser_trials": [
     {
