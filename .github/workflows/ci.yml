@@ -26,7 +26,7 @@ jobs:
         run: python3 -m unittest -v tests/test_verification_gate.py tests/test_lifecycle_guard.py
 
       - name: Run ShellCheck
-        run: shellcheck install.sh doctor.sh install.command scripts/update-checksums.sh tests/test-source.sh evals/run-smoke.sh
+        run: shellcheck install.sh uninstall.sh doctor.sh install.command scripts/update-checksums.sh tests/test-source.sh evals/run-smoke.sh
 
       - name: Run PSScriptAnalyzer
         shell: pwsh
@@ -34,6 +34,7 @@ jobs:
           Install-Module PSScriptAnalyzer -RequiredVersion 1.24.0 -Scope CurrentUser -Force
           $findings = @(
             Invoke-ScriptAnalyzer -Path ./install.ps1 -Severity Warning,Error -ExcludeRule PSAvoidUsingWriteHost
+            Invoke-ScriptAnalyzer -Path ./uninstall.ps1 -Severity Warning,Error -ExcludeRule PSAvoidUsingWriteHost
             Invoke-ScriptAnalyzer -Path ./tests/Test-Install.ps1 -Severity Warning,Error -ExcludeRule PSAvoidUsingWriteHost
           )
           $findings | Format-Table -AutoSize

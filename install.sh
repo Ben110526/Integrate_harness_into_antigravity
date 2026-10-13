@@ -440,6 +440,8 @@ if [[ -z "${agy_executable}" ]]; then
 
   printf 'Antigravity CLI is not installed; downloading the official installer...\n'
   installer_path="$(mktemp "${TMPDIR:-/tmp}/agy-install.XXXXXX")"
+  # Trust note: the vendor installer is a moving target, so unlike the pinned,
+  # checksum-verified GitHub MCP asset it is fetched over TLS without a hash.
   curl -fsSL https://antigravity.google/cli/install.sh -o "${installer_path}"
   bash "${installer_path}"
 
@@ -519,7 +521,9 @@ while IFS= read -r policy_line || [[ -n "${policy_line}" ]]; do
   printf '%s\n' "${policy_line}" >> "${policy_temp_path}"
 done < "${policy_source}"
 printf '%s\n' "${policy_end_marker}" >> "${policy_temp_path}"
-if [[ -f "${policy_target}" ]]; then
+# Keep the FIRST pre-install state as the backup so repeat installs do not
+# overwrite it with an already-managed policy (uninstall.sh restores it).
+if [[ -f "${policy_target}" && ! -f "${policy_target}.bak" ]]; then
   cp -p -- "${policy_target}" "${policy_target}.bak"
 fi
 mv -- "${policy_temp_path}" "${policy_target}"

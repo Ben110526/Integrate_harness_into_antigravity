@@ -80,6 +80,32 @@ class MultiturnCompletionTests(unittest.TestCase):
         self.prepared()
         self.assertAllows(self.finish())
 
+    def test_delivery_review_citing_unrecorded_check_is_rejected(self):
+        self.register()
+        self.review("scope", 3)
+        self.write(step=4)
+        self.command(5, "python3 -m pytest -q")
+        self.review("delivery", 6, rows=[self.row(evidence=[99], reason="Invented step.")])
+        self.assertContinues(self.finish(rows=[self.row(evidence=[99])]))
+        self.assertIn("delivery", self.state().get("acceptanceReviewErrors", {}))
+
+    def test_complete_rejected_when_all_static_after_logic_write(self):
+        self.register([self.requirement(verification="static")])
+        self.review("scope", 3)
+        self.write(step=4)
+        self.command(5, "python3 -m pytest -q")
+        self.review("delivery", 6)
+        result = self.finish()
+        self.assertEqual(result["decision"], "continue", result)
+        self.assertIn("declared static", result["reason"])
+
+    def test_all_static_contract_can_complete_without_logic_writes(self):
+        self.register([self.requirement(verification="static")])
+        self.review("scope", 3)
+        self.command(5, "python3 -m pytest -q")
+        self.review("delivery", 6, rows=[self.row(evidence=[5], reason="The check covers the static change.")])
+        self.assertAllows(self.finish())
+
     def test_passing_test_without_delivery_review_is_not_complete(self):
         self.register()
         self.review("scope", 3)

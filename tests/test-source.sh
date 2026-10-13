@@ -15,7 +15,7 @@ cmp -s global/GEMINI.md plugin/codex-claude-harness/rules/engineering-harness.md
   fail 'global and plugin policies differ'
 
 printf '[check] shell syntax\n'
-shell_files=(install.sh doctor.sh install.command evals/run-smoke.sh scripts/update-checksums.sh)
+shell_files=(install.sh uninstall.sh doctor.sh install.command evals/run-smoke.sh scripts/update-checksums.sh)
 if [[ -d plugin/codex-claude-harness/scripts ]]; then
   while IFS= read -r script_path; do
     shell_files+=("${script_path}")
@@ -661,6 +661,16 @@ if HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${fake_bin}:${PATH}" \
 fi
 grep -Fq 'without paths, credentials, or wildcards' "${test_root}/install-invalid-origin.log" || \
   fail 'installer did not explain the rejected Playwright origin'
+
+printf '[check] uninstaller restores the pre-install policy and removes the plugin\n'
+HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${fake_bin}:${PATH}" \
+  ./uninstall.sh > "${test_root}/uninstall.log"
+[[ ! -d "${installed_plugin}" ]] || fail 'uninstaller left the harness plugin directory behind'
+[[ ! -e "${policy_target}.bak" ]] || fail 'uninstaller left the policy backup behind'
+grep -Fq -- '- Keep this line.' "${policy_target}" || fail 'uninstaller lost the pre-existing user policy'
+if grep -Fq '<!-- auto-harness:start -->' "${policy_target}"; then
+  fail 'uninstaller left the managed policy block behind'
+fi
 
 shell_home="${test_root}/shell-home"
 shell_bin="${test_root}/shell-bin"

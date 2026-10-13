@@ -87,11 +87,6 @@ _SENSITIVE_ENV = re.compile(
     r"\.env(?:rc|[._-][A-Za-z0-9_.-]*)?(?![A-Za-z0-9_.-])"
 )
 _SAFE_ENV_NAMES = {".env.example", ".env.sample", ".env.template"}
-_ENV_EGRESS_COMMAND = re.compile(
-    r"(?i)(?:^|[;&|()]\s*|\s)(?:cat|head|tail|less|more|type|Get-Content|"
-    r"Select-String|sed|awk|grep|rg|curl|wget|scp|rsync|nc|ncat|http|https|"
-    r"Invoke-WebRequest|Invoke-RestMethod)\b"
-)
 _GIT_ENV_OUTPUT = re.compile(
     r"(?i)(?:^|[;&|()]\s*|\s)git\b[^;&|\r\n]*?\b(?:show|diff)\b"
 )
@@ -263,6 +258,46 @@ def _has_ambiguous_secret(text: str) -> bool:
     return False
 
 
+_BASE64_BLOB = re.compile(r"(?<![A-Za-z0-9+/=_-])[A-Za-z0-9+/_-]{32,}={0,2}(?![A-Za-z0-9+/=_-])")
+_MAX_DECODED_BLOBS = 32
+_MAX_DECODED_BYTES = 4096
+
+
+def _decoded_base64_blobs(text: str) -> Iterator[str]:
+    """Decode a bounded set of standalone base64 blobs so an encoded token or
+    key block cannot evade the content scans."""
+    for index, match in enumerate(_BASE64_BLOB.finditer(text)):
+        if index >= _MAX_DECODED_BLOBS:
+            break
+        blob = match.group(0)
+        try:
+            decoded = base64.b64decode(blob, validate=True)
+        except ValueError:
+            try:
+                decoded = base64.b64decode(blob, altchars=b"-_", validate=True)
+            except ValueError:
+                continue
+        if 0 < len(decoded) <= _MAX_DECODED_BYTES:
+            yield decoded.decode("utf-8", "ignore")
+
+
+def _high_confidence_category_deep(text: str) -> Optional[str]:
+    category = _high_confidence_category(text)
+    if category is not None:
+        return category
+    for blob in _decoded_base64_blobs(text):
+        category = _high_confidence_category(blob)
+        if category is not None:
+            return category
+    return None
+
+
+def _has_ambiguous_secret_deep(text: str) -> bool:
+    if _has_ambiguous_secret(text):
+        return True
+    return any(_has_ambiguous_secret(blob) for blob in _decoded_base64_blobs(text))
+
+
 def _env_paths(command: str) -> List[str]:
     paths = []
     for match in _SENSITIVE_ENV.finditer(command):
@@ -362,6 +397,8 @@ def _untrusted_roots(
 
 
 def _permissions_are_trusted(path: Path) -> bool:
+    # Windows ACLs are not inspected here; the untrusted-roots exclusion in
+    # _trusted_executable still keeps workspace/temp binaries out.
     if os.name == "nt":
         return True
     for candidate in (path,) + tuple(path.parents):
@@ -702,9 +739,9 @@ def _inspect_staged_commit(args: Dict[str, Any], payload: Dict[str, Any], comman
         for line in diff.splitlines()
         if line.startswith("+") and not line.startswith("+++")
     )
-    if _high_confidence_category(additions):
+    if _high_confidence_category_deep(additions):
         return "deny"
-    if _has_ambiguous_secret(additions):
+    if _has_ambiguous_secret_deep(additions):
         return "ask"
     return "pass"
 
@@ -713,10 +750,10 @@ def _security_decision(payload: Dict[str, Any]) -> Dict[str, str]:
     name, args = _tool_call(payload)
     if name in WRITE_TOOLS:
         content = _write_content(name, args)
-        category = _high_confidence_category(content)
+        category = _high_confidence_category_deep(content)
         if category:
             return {"decision": "deny", "reason": "DLP blocked high-confidence %s." % category}
-        if _has_ambiguous_secret(content):
+        if _has_ambiguous_secret_deep(content):
             return {
                 "decision": "force_ask",
                 "reason": "DLP found possible credential material; review the destination and content before proceeding.",
@@ -725,10 +762,10 @@ def _security_decision(payload: Dict[str, Any]) -> Dict[str, str]:
 
     if name == "call_mcp_tool":
         content = _mcp_content(args)
-        category = _high_confidence_category(content)
+        category = _high_confidence_category_deep(content)
         if category:
             return {"decision": "deny", "reason": "DLP blocked high-confidence %s in an MCP tool call." % category}
-        if _has_ambiguous_secret(content):
+        if _has_ambiguous_secret_deep(content):
             return {
                 "decision": "force_ask",
                 "reason": "DLP found possible credential material in an MCP tool call; review the destination server and arguments before proceeding.",
@@ -741,7 +778,7 @@ def _security_decision(payload: Dict[str, Any]) -> Dict[str, str]:
     if not isinstance(command, str) or len(command) > MAX_SCAN_CHARS:
         raise ScanIncomplete("invalid command")
 
-    category = _high_confidence_category(command)
+    category = _high_confidence_category_deep(command)
     if category:
         return {"decision": "deny", "reason": "DLP blocked high-confidence %s." % category}
 
@@ -784,7 +821,7 @@ def _security_decision(payload: Dict[str, Any]) -> Dict[str, str]:
                 "reason": "DLP could not safely validate all content that this commit may stage; review it before proceeding.",
             }
 
-    if _has_ambiguous_secret(command):
+    if _has_ambiguous_secret_deep(command):
         return {
             "decision": "force_ask",
             "reason": "DLP found possible credential material in the command; review it before proceeding.",

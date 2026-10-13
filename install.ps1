@@ -316,6 +316,8 @@ $agyCommand = Get-Command agy -ErrorAction SilentlyContinue
 $agyWasInstalled = $null -ne $agyCommand
 if (-not $agyCommand) {
     Write-Host "Antigravity CLI is not installed; running the official installer..."
+    # Trust note: the vendor installer is a moving target, so unlike the pinned,
+    # checksum-verified GitHub MCP asset it is fetched over TLS without a hash.
     $installer = Invoke-RestMethod "https://antigravity.google/cli/install.ps1"
     & ([scriptblock]::Create($installer))
 
@@ -393,7 +395,14 @@ $policyTempPath = Join-Path $policyDirectory ("GEMINI.md.tmp-" + [Guid]::NewGuid
 try {
     [System.IO.File]::WriteAllText($policyTempPath, $mergedPolicy, $utf8WithoutBom)
     if (Test-Path $policyTarget -PathType Leaf) {
-        [System.IO.File]::Replace($policyTempPath, $policyTarget, $policyTarget + ".bak")
+        # Keep the FIRST pre-install backup so repeat installs do not overwrite
+        # it with an already-managed policy (uninstall.ps1 restores it).
+        $policyBackupTarget = $policyTarget + ".bak"
+        if (Test-Path $policyBackupTarget -PathType Leaf) {
+            [System.IO.File]::Replace($policyTempPath, $policyTarget, $null)
+        } else {
+            [System.IO.File]::Replace($policyTempPath, $policyTarget, $policyBackupTarget)
+        }
     } else {
         [System.IO.File]::Move($policyTempPath, $policyTarget)
     }

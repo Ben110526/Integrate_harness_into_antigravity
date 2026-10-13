@@ -220,6 +220,32 @@ class LifecycleGuardTests(unittest.TestCase):
         )
         self.assertEqual(result["decision"], "force_ask")
 
+    def test_base64_encoded_secret_is_denied(self) -> None:
+        encoded = base64.b64encode(b"ghp_abcdefghijklmnopqrstuvwxyzABCDEFGHIJ").decode()
+        for name, args in (
+            ("write_to_file", {"CodeContent": "embedded: " + encoded}),
+            ("run_command", {"CommandLine": "printf %s " + encoded, "Cwd": str(self.workspace)}),
+            ("call_mcp_tool", {"ServerName": "s", "ToolName": "t",
+                               "Arguments": {"payload": encoded}}),
+        ):
+            with self.subTest(name=name):
+                result = self.security(name, args)
+                self.assertEqual(result["decision"], "deny")
+                self.assertNotIn(encoded[:16], json.dumps(result))
+
+    def test_base64_encoded_private_key_block_is_denied(self) -> None:
+        body = base64.b64encode(bytes(range(64))).decode("ascii")
+        block = "-----BEGIN PRIVATE KEY-----\n%s\n-----END PRIVATE KEY-----" % body
+        encoded = base64.b64encode(block.encode()).decode()
+        result = self.security("write_to_file", {"CodeContent": encoded})
+        self.assertEqual(result["decision"], "deny")
+
+    def test_innocuous_base64_blob_is_not_flagged(self) -> None:
+        encoded = base64.b64encode(b"an ordinary documentation string without anything sensitive").decode()
+        self.assert_normal_ask(
+            self.security("write_to_file", {"CodeContent": "blob: " + encoded})
+        )
+
     def test_known_tokens_and_aws_secret_are_hard_denied_and_redacted(self) -> None:
         samples = (
             "token='ghp_abcdefghijklmnopqrstuvwxyzABCDEFGHIJ'",

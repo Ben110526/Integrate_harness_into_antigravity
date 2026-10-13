@@ -174,7 +174,8 @@ class VerificationGateTests(unittest.TestCase):
         self.assertEqual(second["decision"], "allow")
         self.assertIn("one format reminder", second["reason"])
         state = json.loads((self.artifacts / GATE_MODULE.STATE_FILE).read_text())
-        self.assertEqual(state, {"citationTurnStep": 1, "lastMcpStep": 2, "mcpStatusReminderUserStep": 1})
+        self.assertEqual(state, {"citationTurnStep": 1, "gateBypassed": True,
+                                 "lastMcpStep": 2, "mcpStatusReminderUserStep": 1})
         self.assertNotIn("DO_NOT_RETAIN", json.dumps(state))
 
     def test_mcp_handoff_corrected_plain_status_is_accepted(self) -> None:
@@ -572,10 +573,9 @@ class VerificationGateTests(unittest.TestCase):
             self.user_record("Inspect the code."),
             self.model_record(f"[outside]({outside}:1)"),
         )
-        self.assertEqual(
-            self.grounded_stop(transcript, workspacePaths=str(self.workspace)),
-            {"decision": "allow"},
-        )
+        result = self.grounded_stop(transcript, workspacePaths=str(self.workspace))
+        self.assertEqual(result["decision"], "allow")
+        self.assertIn("could not be grounded", result["reason"])
 
     def test_grounding_and_verification_failures_are_combined(self) -> None:
         self.write(target=self.workspace / "app.py")

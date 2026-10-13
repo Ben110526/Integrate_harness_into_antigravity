@@ -143,7 +143,12 @@ FINAL_PROMPT = (
 
 @dataclasses.dataclass(frozen=True)
 class NativeCompactionEvidence:
-    """Construct only at the native UI/event boundary, never from model prose."""
+    """Construct only at the native UI/event boundary, never from model prose.
+
+    The caller-supplied status string is trusted operator input: this check
+    records what the operator observed, and cannot independently prove that
+    compaction occurred.
+    """
     observed: bool
     manual: bool
 

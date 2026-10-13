@@ -1826,6 +1826,8 @@ def _register_acceptance_review(
             if not isinstance(rows, list) or len(rows) != len(expected):
                 raise ValueError("delivery review must account for every active requirement")
             seen = set()
+            observed = {item.get("step"): item for item in state.get("checkEvents", [])
+                        if isinstance(item, dict) and type(item.get("step")) is int}
             for row in rows:
                 if (not isinstance(row, dict) or set(row) != {"id", "status", "evidenceSteps", "reason"}
                         or not isinstance(row["id"], str) or row["id"] not in expected or row["id"] in seen
@@ -1838,6 +1840,12 @@ def _register_acceptance_review(
                         or len(evidence) != len(set(evidence))
                         or (row["status"] == "passed" and not evidence)):
                     raise ValueError("invalid reviewed evidence steps")
+                # Cross-check at registration, not only at completion: a cited step
+                # must be a real recorded successful check.
+                for item in evidence:
+                    cited = observed.get(item)
+                    if cited is None or cited.get("success") is not True:
+                        raise ValueError("reviewed evidence step is not a recorded successful check")
                 seen.add(row["id"])
         reviews = state.setdefault("acceptanceReviews", {})
         reviews[phase] = {**review, "step": step}
@@ -2028,6 +2036,11 @@ def _observed_id_context(payload: dict[str, Any]) -> Optional[str]:
 def _completion_repair_context(state: dict[str, Any], user_step: int, response_step: int) -> str:
     """Expose bounded observed IDs for repair, never command text or request content."""
     floor, candidates = _completion_candidate_steps(state, user_step, response_step)
+    bypass_note = (
+        " An earlier stop was allowed with unresolved gate warnings; re-establish "
+        "verification, citation, or status-line evidence before finishing."
+        if state.get("gateBypassed") else ""
+    )
     # Evidence relevance and matching delivery review are still required. These
     # IDs help repair a report without starting another broad check/review loop.
     return (
@@ -2036,6 +2049,7 @@ def _completion_repair_context(state: dict[str, Any], user_step: int, response_s
         f"static={candidates['static'][-8:]}. These are candidates only; AC relevance and "
         "current matching delivery review remain required. Repair only invalid fields; "
         "retain valid scope/reviews/evidence. Rerun checks only if missing, stale or failed."
+        + bypass_note
     )
 
 
@@ -2124,6 +2138,13 @@ def _completion_status(payload: dict[str, Any], state: dict[str, Any]) -> tuple[
                     raise ValueError("Complete needs a scope review before implementation and a delivery review with no unmapped user requests.")
             if contract.get("late") or any(user_step < write < contract["registeredStep"] for write in state.get("writeSteps", [])):
                 raise ValueError("The inventory was registered after implementation began; report partial and request an explicit scope review.")
+            behavioral_write = state.get("lastBehavioralWriteStep")
+            if (isinstance(behavioral_write, int) and behavioral_write > contract["registeredStep"]
+                    and not any(requirement.get("verification") == "behavioral"
+                                for requirement in contract["requirements"])):
+                raise ValueError(
+                    "Logic files changed but every requirement is declared static; declare the "
+                    "behavioral AC honestly or report partial with a concrete reason.")
             if passed != len(expected):
                 raise ValueError("Complete requires every AC to pass; report the actual passed/total count and partial or blocked.")
             failure_floor = contract["originStep"] if multiturn else user_step
@@ -2368,6 +2389,8 @@ def _handle_stop(payload: dict[str, Any]) -> None:
                 )
             else:
                 warnings.append("MCP handoff status is still missing; allowing stop after one format reminder.")
+                state["gateBypassed"] = True
+                state_changed = True
         completion, completion_reason = _completion_status(payload, state)
         if completion == "invalid":
             continue_reasons.append(
@@ -2407,6 +2430,13 @@ def _handle_stop(payload: dict[str, Any]) -> None:
                     "Citation grounding is still invalid; allowing stop after one reminder to "
                     "avoid a loop."
                 )
+                state["gateBypassed"] = True
+                state_changed = True
+        elif citation_status == "unavailable" and isinstance(citation_turn_step, int):
+            warnings.append(
+                "One or more cited files could not be grounded (unknown workspace root or "
+                "file over the citation size bound); those citations are unverified."
+            )
 
         write_step = state.get("lastWriteStep")
         evidence_step = state.get("lastEvidenceStep")
@@ -2453,6 +2483,8 @@ def _handle_stop(payload: dict[str, Any]) -> None:
                 warnings.append(
                     "Verification is still missing; allowing stop after one reminder to avoid a loop."
                 )
+                state["gateBypassed"] = True
+                state_changed = True
         elif completion in {"partial", "blocked"} and isinstance(behavioral_write_step, int):
             # A truthful incomplete result may finish, but not silently: a logic
             # write with zero verification attempts (not even a failed check or
@@ -2468,6 +2500,9 @@ def _handle_stop(payload: dict[str, Any]) -> None:
                     "latest logic write; even a failed check or an explicit "
                     f"`{NO_CHECK_MARKER} <reason>` waiver keeps the gap auditable."
                 )
+        if not continue_reasons and not warnings:
+            if state.pop("gateBypassed", None) is not None:
+                state_changed = True
         if state_changed:
             _save_state(path, state)
 

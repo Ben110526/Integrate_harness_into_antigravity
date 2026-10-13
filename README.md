@@ -138,8 +138,13 @@ By default, Antigravity CLI may prompt for approval before executing certain ter
 #### Recommended Configuration:
 Add the allowlist rules under `permissions.allow`:
 
-The installer preserves existing permissions. Keep default Ask for Git mutations,
-external actions and MCP calls.
+The installer never modifies `settings.json`, so your existing permissions stay
+untouched. Keep default Ask for Git mutations, external actions and MCP calls.
+
+> [!WARNING]
+> Only auto-approve test/build runners (`npm run build`, `pnpm test`, …) for
+> repositories you trust: these commands execute whatever the repository's
+> `package.json` scripts contain, without a confirmation prompt.
 
 ```json
 {
@@ -227,7 +232,7 @@ external actions and MCP calls.
 - 🧠 `harness-serena`: Semantic code intelligence and symbol graphs for large codebases (`.serena/project.yml`).
 - 🌐 `harness-playwright`: Automated browser testing and UI exploration (loopback restricted by default).
 - 🐙 `harness-github`: Read-only access to Issues, Pull Requests, CI Actions, and security alerts.
-- 🚨 `harness-sentry`: Real-time production error, issue, and telemetry data inspection.
+- 🚨 `harness-sentry`: Real-time production error, issue, and telemetry data inspection. **Note:** this is the one bundled server that runs remotely — tool arguments (issue IDs, search terms) are sent to `mcp.sentry.dev`, so avoid passing secrets or sensitive code.
 
 The AI selects from available authorized capabilities, chains or switches tools when evidence warrants it, and can batch bounded independent read-only queries. There is no fixed server/query quota or mandatory smoke-call ceremony. Local evidence and safe fallbacks remain available; task-time use does not install servers or bypass permissions. MCP/manual results alone are not automatically completion-gate check evidence. See [adaptive MCP routing](docs/mcp-profiles.md#adaptive-use-during-a-task).
 
@@ -246,6 +251,8 @@ Run the automated diagnostic health check to verify your environment (`agy`, Pyt
 - **`agy: command not found`:** Add `$HOME/.local/bin` to your `PATH` environment variable or restart your terminal.
 - **Playwright external Internet access:** By default, Playwright is restricted to loopback (`localhost`). To enable Internet access, run `./install.sh --playwright-unrestricted` (macOS/Linux) or `.\install.ps1 -PlaywrightUnrestricted` (Windows).
 - **Updating the harness:** Run `git pull && ./install.sh` (on Windows: run `git pull`, then execute `.\install.cmd` or `.\install.ps1`).
+- **Uninstalling the harness:** Run `./uninstall.sh` (macOS/Linux) or `.\uninstall.ps1` (Windows). It removes the plugin, restores your pre-install `GEMINI.md` from the automatic `.bak` backup, and removes the pinned GitHub MCP binary. Your `settings.json` is never touched.
+- **Python missing or upgraded:** The lifecycle hooks require Python 3.8+. Without it, DLP falls back to forced review, but the verification gate fails open (stops are allowed) to avoid lockouts. `doctor.sh` / `doctor.ps1` detects a missing or invalid hook runtime; rerun the installer to repair it.
 
 </details>
 
