@@ -1,0 +1,1080 @@
+{
+  "schema_version": 1,
+  "evaluation_date": "2026-10-13",
+  "client": {
+    "name": "Antigravity CLI",
+    "version": "1.3.4",
+    "model": "gemini-3.8-flash-high"
+  },
+  "environment": {
+    "first_party_client_only": true,
+    "native_ask_preserved": true,
+    "global_permissions_changed": false,
+    "windows_excluded_by_user": true
+  },
+  "installed_build": {
+    "behavior_sha256": "6ff28253efa1642ba5cfcdae435eea607677413bc9bb23ccf62e7da2927b4e4d",
+    "runtime": {
+      "scripts/verification_gate.py": "e40b32211326b32d36ad36d3569e55a66169b7095bd6ecd1bd8477ef391e537b",
+      "scripts/lifecycle_guard.py": "a991241467db9e064533ce4b82a75edf88d1799c3023c36c62abb8d6d5cc3ba9",
+      "hooks.json": "a090c2278702e86168fd3c76baf204c1fa4cab73590f080ba6be1a6a22a8c26f"
+    },
+    "evals": {
+      "output_quality.py": "ae5aa45dbeeaf7be8c6f6a57429b80fd392edff785fc28596198a8f2524a9422",
+      "browser_quality.py": "fba754a8e7aab01bdc84ddb64b8c40d83209cbf5a7411c3ed087c220897f5180",
+      "compaction_quality.py": "f0f4d2fa6b7887a442940ddb70cbf1792aeff1996ab7b04b398a398b06af3805"
+    },
+    "cli_version": "1.3.4",
+    "cli_binary_sha256": "9da414c0624c27aa2969a86030a070b5341c0657700512eba70b21725ce253f5"
+  },
+  "verification": {
+    "installer_exit_code": 0,
+    "source_runtime_installed_match": true,
+    "managed_global_policy_matches_source": true,
+    "python_tests": 350,
+    "python_skipped": 3,
+    "node_tests": 15,
+    "source_checks_passed": true
+  },
+  "native_browser_trials": [
+    {
+      "event": "native_browser_cold_start_eval",
+      "cli_version": "1.3.4",
+      "model": "gemini-3.8-flash-high",
+      "new_client_process": true,
+      "new_conversation": true,
+      "new_project": true,
+      "new_workspace": true,
+      "prompt_sent_at_launch": true,
+      "operator_startup_readiness_inspections": 0,
+      "operator_model_tool_hints": 0,
+      "pre_prompt_idle_wait": false,
+      "native_mcp_calls_observed": 0,
+      "one_time_approvals": [],
+      "global_permissions_changed": false,
+      "native_ask_preserved": true,
+      "browser_page_hit": false,
+      "browser_confirmation_hit": false,
+      "initial_text_correct": false,
+      "confirmation_correct": false,
+      "harness_status_present": true,
+      "model_reported_blocker": "native_mcp_invoker_absent",
+      "native_dispatch_proven": false,
+      "dispatcher_error_proven": false,
+      "behavior_passed": false,
+      "overall_pass": false,
+      "model_followed_safe_blocked_path": true,
+      "post_task_native_inventory_inspection": true,
+      "post_task_inventory_note": "Playwright status changed from cached ready to initializing while /mcp panel was opened after the failed task; root cause not established.",
+      "observation_seconds": 500,
+      "latency_comparable": false
+    },
+    {
+      "event": "native_browser_fresh_ui_eval",
+      "cli_version": "1.3.4",
+      "model": "gemini-3.8-flash-high",
+      "new_client_process": true,
+      "new_conversation": true,
+      "new_project": true,
+      "new_workspace": true,
+      "prompt_sent_at_launch": false,
+      "operator_startup_readiness_inspections": 0,
+      "operator_model_tool_hints": 0,
+      "pre_prompt_idle_wait": false,
+      "native_mcp_calls_observed": 0,
+      "one_time_approvals": [],
+      "global_permissions_changed": false,
+      "native_ask_preserved": true,
+      "browser_page_hit": false,
+      "browser_confirmation_hit": false,
+      "initial_text_correct": false,
+      "confirmation_correct": false,
+      "harness_status_present": true,
+      "model_reported_blocker": "native_mcp_invoker_absent",
+      "native_dispatch_proven": false,
+      "dispatcher_error_proven": false,
+      "behavior_passed": false,
+      "overall_pass": false,
+      "model_followed_safe_blocked_path": true,
+      "post_task_native_inventory_inspection": false,
+      "post_task_inventory_note": "After the failed task, /agents confirmed default is the selected Default agent.",
+      "observation_seconds": 447,
+      "latency_comparable": false,
+      "prompt_sent_immediately_after_first_ui_yield": true,
+      "post_task_default_agent_inspection": true
+    }
+  ],
+  "native_browser_readiness_control": {
+    "event": "native_browser_quality_score",
+    "cli_version": "1.3.4",
+    "model": "gemini-3.8-flash-high",
+    "new_client_process": true,
+    "new_conversation": true,
+    "new_project": true,
+    "new_workspace": true,
+    "operator_startup_readiness_inspections": 1,
+    "operator_model_tool_hints": 0,
+    "pre_prompt_idle_wait": true,
+    "cold_start_pass": false,
+    "native_mcp_calls_observed": 4,
+    "one_time_approvals": [
+      {
+        "tool": "browser_navigate",
+        "scope": "one_time"
+      },
+      {
+        "tool": "browser_snapshot",
+        "scope": "one_time"
+      },
+      {
+        "tool": "browser_click",
+        "scope": "one_time"
+      },
+      {
+        "tool": "browser_snapshot",
+        "scope": "one_time"
+      }
+    ],
+    "native_subagents_observed": 2,
+    "initial_text_correct": true,
+    "confirmation_correct": true,
+    "browser_page_hit": true,
+    "browser_confirmation_hit": true,
+    "harness_status_valid": true,
+    "behavior_passed": true,
+    "success": true,
+    "worker_independence_verified": false,
+    "native_ask_preserved": true,
+    "global_permissions_changed": false,
+    "overall_pass": true,
+    "observation_seconds": 554,
+    "latency_comparable": false,
+    "source_of_final_report": "last_completed_native_ui_handoff; soft-wrapped footer joined for scoring",
+    "native_repair_reminder_observed": false,
+    "notes": "Readiness panel was inspected before the natural prompt. Subagent approval required Ctrl+K to open Ask, then the one-time option. Operator delay is included; this is not a cold-start or latency benchmark."
+  },
+  "compaction": {
+    "event": "compaction_quality_score",
+    "passed": 14,
+    "total": 14,
+    "overall_pass": true,
+    "checks": {
+      "native_compaction_observed": true,
+      "exact_output_shape": true,
+      "earliest_session_label_retained": true,
+      "earliest_time_zone_retained": true,
+      "corrected_attendee_limit": true,
+      "corrected_budget": true,
+      "optimal_active_candidates": true,
+      "approval_constraint_retained": true,
+      "no_messages_constraint_retained": true,
+      "harness_status_present": true,
+      "same_conversation": true,
+      "no_task_tool_calls": true,
+      "no_task_subagent_steps": true,
+      "all_preparation_turns_completed": true
+    },
+    "uncompacted_behavior_diagnostic_pass": null,
+    "manual_compaction": false,
+    "automatic_compaction_observed": true,
+    "history_user_bytes": 824641,
+    "post_compaction_user_turns": 1,
+    "evaluation_user_turns": 1,
+    "archive_batches": 16,
+    "archived_user_bytes": 817687,
+    "task_tool_calls": 0,
+    "task_subagent_steps": 0,
+    "turn_summaries": [
+      {
+        "turn": 1,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 116.855,
+        "usage": {
+          "input_tokens": 2586,
+          "output_tokens": 4504,
+          "thinking_tokens": 4472,
+          "cache_read_tokens": 16236,
+          "total_tokens": 7090
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 2,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 7.655,
+        "usage": {
+          "input_tokens": 27344,
+          "output_tokens": 5314,
+          "thinking_tokens": 5245,
+          "cache_read_tokens": 16236,
+          "total_tokens": 32658
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 3,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 10.821,
+        "usage": {
+          "input_tokens": 30690,
+          "output_tokens": 6112,
+          "thinking_tokens": 6006,
+          "cache_read_tokens": 38875,
+          "total_tokens": 36802
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 4,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 7.301,
+        "usage": {
+          "input_tokens": 34022,
+          "output_tokens": 6671,
+          "thinking_tokens": 6528,
+          "cache_read_tokens": 62722,
+          "total_tokens": 40693
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 5,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 21.452,
+        "usage": {
+          "input_tokens": 37105,
+          "output_tokens": 7230,
+          "thinking_tokens": 7050,
+          "cache_read_tokens": 87769,
+          "total_tokens": 44335
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 6,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 6.713,
+        "usage": {
+          "input_tokens": 40189,
+          "output_tokens": 7829,
+          "thinking_tokens": 7612,
+          "cache_read_tokens": 113778,
+          "total_tokens": 48018
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 7,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 6.229,
+        "usage": {
+          "input_tokens": 43316,
+          "output_tokens": 8482,
+          "thinking_tokens": 8228,
+          "cache_read_tokens": 140757,
+          "total_tokens": 51798
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 8,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 62.581,
+        "usage": {
+          "input_tokens": 46269,
+          "output_tokens": 8707,
+          "thinking_tokens": 8419,
+          "cache_read_tokens": 168742,
+          "total_tokens": 54976
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 9,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 5.018,
+        "usage": {
+          "input_tokens": 48746,
+          "output_tokens": 8916,
+          "thinking_tokens": 8588,
+          "cache_read_tokens": 197529,
+          "total_tokens": 57662
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 10,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 106.146,
+        "usage": {
+          "input_tokens": 51219,
+          "output_tokens": 9167,
+          "thinking_tokens": 8796,
+          "cache_read_tokens": 226644,
+          "total_tokens": 60386
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 11,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 5.572,
+        "usage": {
+          "input_tokens": 53729,
+          "output_tokens": 9340,
+          "thinking_tokens": 8933,
+          "cache_read_tokens": 256136,
+          "total_tokens": 63069
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 12,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 5.865,
+        "usage": {
+          "input_tokens": 56211,
+          "output_tokens": 9726,
+          "thinking_tokens": 9285,
+          "cache_read_tokens": 285988,
+          "total_tokens": 65937
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 13,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 12.505,
+        "usage": {
+          "input_tokens": 109114,
+          "output_tokens": 9907,
+          "thinking_tokens": 9433,
+          "cache_read_tokens": 285988,
+          "total_tokens": 119021
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 14,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 6.466,
+        "usage": {
+          "input_tokens": 182357,
+          "output_tokens": 10051,
+          "thinking_tokens": 9544,
+          "cache_read_tokens": 285988,
+          "total_tokens": 192408
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 15,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 4.948,
+        "usage": {
+          "input_tokens": 204920,
+          "output_tokens": 10195,
+          "thinking_tokens": 9655,
+          "cache_read_tokens": 356890,
+          "total_tokens": 215115
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 16,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 4.692,
+        "usage": {
+          "input_tokens": 227431,
+          "output_tokens": 10339,
+          "thinking_tokens": 9766,
+          "cache_read_tokens": 448066,
+          "total_tokens": 237770
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 17,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 4.407,
+        "usage": {
+          "input_tokens": 249905,
+          "output_tokens": 10483,
+          "thinking_tokens": 9877,
+          "cache_read_tokens": 559501,
+          "total_tokens": 260388
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 18,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 4.723,
+        "usage": {
+          "input_tokens": 272352,
+          "output_tokens": 10627,
+          "thinking_tokens": 9988,
+          "cache_read_tokens": 691185,
+          "total_tokens": 282979
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 19,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 5.477,
+        "usage": {
+          "input_tokens": 294779,
+          "output_tokens": 10771,
+          "thinking_tokens": 10099,
+          "cache_read_tokens": 843111,
+          "total_tokens": 305550
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 20,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 6.985,
+        "usage": {
+          "input_tokens": 317189,
+          "output_tokens": 10915,
+          "thinking_tokens": 10210,
+          "cache_read_tokens": 1015276,
+          "total_tokens": 328104
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 21,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 5.926,
+        "usage": {
+          "input_tokens": 339586,
+          "output_tokens": 11059,
+          "thinking_tokens": 10321,
+          "cache_read_tokens": 1207676,
+          "total_tokens": 350645
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 22,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 7.135,
+        "usage": {
+          "input_tokens": 361973,
+          "output_tokens": 11206,
+          "thinking_tokens": 10434,
+          "cache_read_tokens": 1420309,
+          "total_tokens": 373179
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 23,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 5.402,
+        "usage": {
+          "input_tokens": 384354,
+          "output_tokens": 11353,
+          "thinking_tokens": 10547,
+          "cache_read_tokens": 1653174,
+          "total_tokens": 395707
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 24,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 10.162,
+        "usage": {
+          "input_tokens": 406727,
+          "output_tokens": 11500,
+          "thinking_tokens": 10660,
+          "cache_read_tokens": 1906273,
+          "total_tokens": 418227
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 25,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 68.933,
+        "usage": {
+          "input_tokens": 412600,
+          "output_tokens": 12345,
+          "thinking_tokens": 11460,
+          "cache_read_tokens": 1924650,
+          "total_tokens": 424945
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 26,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 10.574,
+        "usage": {
+          "input_tokens": 433780,
+          "output_tokens": 12707,
+          "thinking_tokens": 11777,
+          "cache_read_tokens": 1948994,
+          "total_tokens": 446487
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 27,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 5.206,
+        "usage": {
+          "input_tokens": 456293,
+          "output_tokens": 13069,
+          "thinking_tokens": 12094,
+          "cache_read_tokens": 1992497,
+          "total_tokens": 469362
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 28,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 14.093,
+        "usage": {
+          "input_tokens": 478801,
+          "output_tokens": 13419,
+          "thinking_tokens": 12399,
+          "cache_read_tokens": 2056446,
+          "total_tokens": 492220
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      },
+      {
+        "turn": 29,
+        "status": "SUCCESS",
+        "route": "DIRECT",
+        "duration_seconds": 30.051,
+        "usage": {
+          "input_tokens": 565826,
+          "output_tokens": 16646,
+          "thinking_tokens": 15391,
+          "cache_read_tokens": 2056446,
+          "total_tokens": 582472
+        },
+        "event_diagnostics": {
+          "response_source": "last_completed_agent_response_step",
+          "agent_response_steps": 1,
+          "subagent_steps": 0,
+          "errored_steps": 0,
+          "aggregate_claim_count": 0,
+          "final_response_claim_count": 0,
+          "duplicate_command_calls": 0,
+          "native_mcp_invoker_advertised": null,
+          "initialization_seconds": null,
+          "command_categories_heuristic": {},
+          "tools": {}
+        }
+      }
+    ],
+    "model": "gemini-3.8-flash-high",
+    "cli_version": "1.3.4",
+    "build": {
+      "behavior_sha256": "6ff28253efa1642ba5cfcdae435eea607677413bc9bb23ccf62e7da2927b4e4d",
+      "runtime": {
+        "scripts/verification_gate.py": "e40b32211326b32d36ad36d3569e55a66169b7095bd6ecd1bd8477ef391e537b",
+        "scripts/lifecycle_guard.py": "a991241467db9e064533ce4b82a75edf88d1799c3023c36c62abb8d6d5cc3ba9",
+        "hooks.json": "a090c2278702e86168fd3c76baf204c1fa4cab73590f080ba6be1a6a22a8c26f"
+      },
+      "evals": {
+        "output_quality.py": "ae5aa45dbeeaf7be8c6f6a57429b80fd392edff785fc28596198a8f2524a9422",
+        "browser_quality.py": "fba754a8e7aab01bdc84ddb64b8c40d83209cbf5a7411c3ed087c220897f5180",
+        "compaction_quality.py": "f0f4d2fa6b7887a442940ddb70cbf1792aeff1996ab7b04b398a398b06af3805"
+      },
+      "cli_version": "1.3.4",
+      "cli_binary_sha256": "9da414c0624c27aa2969a86030a070b5341c0657700512eba70b21725ce253f5"
+    },
+    "wall_seconds": 449.923,
+    "native_boundary_evidence": {
+      "observed": true,
+      "manual": false,
+      "origin": "native_cli_rendered_divider",
+      "native_label": "Conversation compacted",
+      "native_divider_observed_after_preparation_turn": 28,
+      "context_at_core_12_tokens_approx": 39000,
+      "context_at_stage_16_tokens_approx": 85200,
+      "context_window_tokens_approx": 1000000,
+      "context_drop_measured_at_boundary": false,
+      "checkpoint_event_count": 1,
+      "raw_history_retained_in_artifact": false
+    },
+    "checkpoint_metadata_diagnostics": [
+      {
+        "state": "DONE",
+        "has_checkpoint_info": false,
+        "has_compaction_info": false
+      }
+    ],
+    "transport": "public_persistent_stream_by_stage",
+    "prior_preparation": {
+      "completed_turns": 12,
+      "transport": "public_persistent_stream_by_stage",
+      "eval_runner_sha256": "f0f4d2fa6b7887a442940ddb70cbf1792aeff1996ab7b04b398a398b06af3805"
+    },
+    "native_user_count_at_last_preparation": 28,
+    "active_turn_seconds": 569.893,
+    "duration_comparison_note": "Active durations sum only successful model turns; wall time includes operator native context checks. Neither is comparable to the earlier four-turn coding workload.",
+    "preparation_turns_before_final_evaluation": 28,
+    "compaction_boundary_turn_exact": null,
+    "boundary_count_note": "Native compaction was observed after all 28 preparation turns; the exact boundary index was not established."
+  },
+  "incomplete_attempts": [
+    {
+      "attempt": "initial_oneshot",
+      "overall_pass": false,
+      "error_type": "EvalError",
+      "detail": "unexpected response status",
+      "wall_seconds": 63.493,
+      "completed_turns": 0
+    },
+    {
+      "attempt": "partial_oneshot_core",
+      "overall_pass": false,
+      "error_type": "EvalError",
+      "detail": "unexpected response status",
+      "wall_seconds": 175.079,
+      "terminal_failure_metadata": {
+        "status": "ERROR",
+        "labels": [
+          "unavailable"
+        ],
+        "denied_action_count": null
+      },
+      "completed_turns": 6
+    },
+    {
+      "attempt": "partial_core_stream_resume",
+      "overall_pass": false,
+      "error_type": "EvalError",
+      "detail": "unexpected response status",
+      "wall_seconds": 20.677,
+      "completed_turns": 6,
+      "terminal_failure_metadata": {
+        "status": "ERROR",
+        "labels": [
+          "unavailable"
+        ],
+        "native_count": 8,
+        "conversation_matches": true
+      }
+    },
+    {
+      "attempt": "fresh_stream_archive_start",
+      "overall_pass": false,
+      "error_type": "EvalError",
+      "detail": "persistent event before initialization",
+      "wall_seconds": 1261.49,
+      "completed_turns": 12,
+      "terminal_failure_metadata": {
+        "status": "ERROR",
+        "labels": [
+          "unavailable"
+        ],
+        "native_count": 0,
+        "conversation_matches": null,
+        "filtered_transport_terms": [
+          "failed",
+          "UNAVAILABLE",
+          "code",
+          "503",
+          "is",
+          "unavailable"
+        ],
+        "conversation_note": "No native initialization or valid conversation identity was emitted; false in operator observer did not establish a mismatch."
+      }
+    },
+    {
+      "attempt": "operator_driver_noop_stage",
+      "overall_pass": false,
+      "error_type": "EvalError",
+      "detail": "stream session emitted an event after the final result",
+      "wall_seconds": 5.191,
+      "completed_turns": 12,
+      "terminal_failure_metadata": {}
+    }
+  ],
+  "comparison": {
+    "previous_report": "2026-10-12-repaired",
+    "previous_browser_operator_startup_readiness_inspections": true,
+    "previous_browser_harness_status_present": false,
+    "current_cold_browser_harness_status_present": true,
+    "current_cold_browser_execution_passed": false,
+    "compaction_previous_baseline_available": false,
+    "causal_policy_improvement_established": false,
+    "current_readiness_control_execution_passed": true,
+    "current_readiness_control_harness_status_present": true
+  }
+}

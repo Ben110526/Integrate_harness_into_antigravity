@@ -160,6 +160,109 @@ class VerificationGateTests(unittest.TestCase):
             **overrides,
         )
 
+    def mcp_transcript(self, response: str = "Observed confirmation.", request: str = "Check the rendered page.") -> Path:
+        self.post(2, "call_mcp_tool", {"ServerName": "test-browser", "ToolName": "snapshot",
+                                      "Arguments": {"private": "DO_NOT_RETAIN"}})
+        return self.transcript(self.user_record(request), self.model_record(response, step=3))
+
+    def test_mcp_handoff_reminds_once_without_granting_permission_or_evidence(self) -> None:
+        transcript = self.mcp_transcript()
+        first = self.grounded_stop(transcript)
+        self.assertEqual(first["decision"], "continue")
+        self.assertIn("Do not rerun tools or change permissions", first["reason"])
+        second = self.grounded_stop(transcript, execution=1)
+        self.assertEqual(second["decision"], "allow")
+        self.assertIn("one format reminder", second["reason"])
+        state = json.loads((self.artifacts / GATE_MODULE.STATE_FILE).read_text())
+        self.assertEqual(state, {"citationTurnStep": 1, "lastMcpStep": 2, "mcpStatusReminderUserStep": 1})
+        self.assertNotIn("DO_NOT_RETAIN", json.dumps(state))
+
+    def test_mcp_handoff_corrected_plain_status_is_accepted(self) -> None:
+        transcript = self.mcp_transcript()
+        self.assertEqual(self.grounded_stop(transcript)["decision"], "continue")
+        self.transcript(self.user_record("Check the rendered page."), self.model_record(
+            "Observed confirmation.\nHarness: REVIEW_VERIFY; passed: rendered interaction; "
+            "failed/skipped: independent review unavailable", step=4))
+        self.assertEqual(self.grounded_stop(transcript, execution=1), {"decision": "allow"})
+
+    def test_failed_mcp_attempt_needs_status_but_never_records_a_check(self) -> None:
+        self.post(2, "call_mcp_tool", {"ServerName": "browser"}, error="permission denied")
+        transcript = self.transcript(self.user_record("Check the page."), self.model_record("Blocked.", step=3))
+        self.assertEqual(self.grounded_stop(transcript)["decision"], "continue")
+        state = json.loads((self.artifacts / GATE_MODULE.STATE_FILE).read_text())
+        self.assertNotIn("checkEvents", state)
+        self.assertNotIn("lastEvidenceStep", state)
+
+    def test_mcp_handoff_does_not_force_direct_or_unobserved_tools(self) -> None:
+        transcript = self.transcript(self.user_record("Explain a queue."), self.model_record("FIFO."))
+        self.assertEqual(self.grounded_stop(transcript), {"decision": "allow"})
+        self.post(2, "browser_navigate", {})
+        self.assertEqual(self.grounded_stop(transcript), {"decision": "allow"})
+
+    def test_mcp_handoff_does_not_inherit_earlier_turn_or_future_tool(self) -> None:
+        self.mcp_transcript()
+        transcript = self.transcript(self.user_record("Explain the result.", step=4), self.model_record("Done.", step=5))
+        self.assertEqual(self.grounded_stop(transcript), {"decision": "allow"})
+        self.post(6, "call_mcp_tool", {})
+        self.assertEqual(self.grounded_stop(transcript), {"decision": "allow"})
+
+    def test_mcp_handoff_new_user_turn_gets_its_own_bounded_reminder(self) -> None:
+        transcript = self.mcp_transcript()
+        self.assertEqual(self.grounded_stop(transcript)["decision"], "continue")
+        self.post(5, "call_mcp_tool", {})
+        self.transcript(self.user_record("Check another page.", step=4), self.model_record("Observed.", step=6))
+        self.assertEqual(self.grounded_stop(transcript)["decision"], "continue")
+        self.assertEqual(self.grounded_stop(transcript, execution=1)["decision"], "allow")
+
+    def test_mcp_handoff_exempts_leaf_and_ambiguous_identity(self) -> None:
+        transcript = self.mcp_transcript()
+        for parent in ("parent-test", None, False):
+            with self.subTest(parent=parent):
+                self.assertEqual(self.grounded_stop(transcript, parentConversationId=parent), {"decision": "allow"})
+
+    def test_mcp_handoff_honors_explicit_exact_output_request(self) -> None:
+        for request in ("Check the page. Reply exactly READY.", "Return only JSON.",
+                        "Chỉ trả lời văn bản xác nhận.", "Check it; do not add Harness."):
+            with self.subTest(request=request):
+                transcript = self.mcp_transcript(request=request)
+                self.assertEqual(self.grounded_stop(transcript), {"decision": "allow"})
+
+    def test_mcp_handoff_status_inside_code_or_duplicate_is_not_a_handoff(self) -> None:
+        line = "Harness: REVIEW_VERIFY; passed: snapshot; failed/skipped: none"
+        for response in ("```\n" + line + "\n```", "`" + line + "`", line + "\n" + line,
+                         "Harness: DIRECT", "Harness: REVIEW_VERIFY; passed: ; failed/skipped: none",
+                         "Harness: REVIEW_VERIFY; passed:  ; failed/skipped: none",
+                         "Harness: REVIEW_VERIFY; passed: snapshot; failed/skipped: \t "):
+            with self.subTest(response=response):
+                transcript = self.mcp_transcript(response=response)
+                self.assertEqual(GATE_MODULE._mcp_handoff_status({**self.common, "transcriptPath": str(transcript)},
+                                                               {"lastMcpStep": 2})[0], "missing")
+
+    def test_mcp_handoff_fails_open_without_compatible_request_and_response(self) -> None:
+        self.post(2, "call_mcp_tool", {})
+        self.assertEqual(self.stop(), {"decision": "allow"})
+        for records in (
+            (self.user_record("Check.", step=1), self.user_record("Check.", step=1), self.model_record("Done.", step=3)),
+            (self.user_record("Check.", step=1), self.model_record("Done.", step=3, status="ACTIVE")),
+            ({**self.user_record("Check."), "truncated_fields": ["content"]}, self.model_record("Done.", step=3)),
+        ):
+            with self.subTest(records=records):
+                self.assertEqual(self.grounded_stop(self.transcript(*records)), {"decision": "allow"})
+
+    def test_mcp_handoff_does_not_interrupt_cancel_error_or_non_idle(self) -> None:
+        transcript = self.mcp_transcript()
+        for overrides in ({"terminationReason": "CANCELED"}, {"error": "failed"}, {"fullyIdle": False}):
+            with self.subTest(overrides=overrides):
+                self.assertEqual(self.grounded_stop(transcript, **overrides), {"decision": "allow"})
+
+    def test_mcp_post_observer_is_permission_neutral_and_out_of_order_safe(self) -> None:
+        self.assertEqual(self.post(4, "call_mcp_tool", {}), {})
+        self.assertEqual(self.post(2, "call_mcp_tool", {}, error="failed"), {})
+        self.assertEqual(json.loads((self.artifacts / GATE_MODULE.STATE_FILE).read_text()), {"lastMcpStep": 4})
+        hooks = json.loads(HOOKS.read_text())
+        self.assertIn("call_mcp_tool", hooks["verification-gate"]["PostToolUse"][0]["matcher"].split("|"))
+        self.assertNotIn("PreToolUse", hooks["verification-gate"])
+
     def test_grounding_accepts_valid_local_markdown_citations(self) -> None:
         source = self.workspace / "src" / "app.py"
         source.parent.mkdir()

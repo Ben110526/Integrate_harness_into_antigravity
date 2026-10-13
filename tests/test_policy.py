@@ -33,6 +33,11 @@ class PolicyTests(unittest.TestCase):
         self.assertGreaterEqual(size, BASELINE_BYTES * 0.70)
         self.assertLessEqual(size, BASELINE_BYTES * 0.82 + COMPLETION_PROTOCOL_BUDGET_BYTES)
 
+    def test_mcp_main_handoffs_require_status_with_user_format_and_leaf_exceptions(self) -> None:
+        self.assertIn("browser QA is `REVIEW_VERIFY`", self.policy)
+        self.assertIn("Main non-direct/MCP handoffs:", self.policy)
+        self.assertIn("honor user exact formats; exempt leaves", self.policy)
+
     def test_completion_and_business_rule_contracts_are_always_on(self) -> None:
         for required in (
             "without omission or dilution", "harness-task-contract.json",
@@ -304,7 +309,7 @@ class PolicyTests(unittest.TestCase):
             "concrete code bugs/risks",
             "runtime/reproduction/security behavior, or changed code",
             "independent `harness-reviewer` + `harness-verifier`",
-            "Source plus possible errors is `REVIEW_VERIFY`",
+            "Source plus possible errors or browser QA is `REVIEW_VERIFY`",
             "Concrete/executable findings promote to `REVIEW_VERIFY` before reporting",
         }
         self.assertFalse({term for term in review_contract if term not in self.policy})

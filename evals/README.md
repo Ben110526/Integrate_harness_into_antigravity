@@ -219,6 +219,126 @@ zero model tool hints after operator startup-readiness inspection; its missing
 Harness status line and startup confound remain explicit. Failed and interrupted
 intermediate attempts remain unscored.
 
+## Native browser MCP from a fresh session
+
+`browser_quality.py` serves an isolated loopback registration page and supplies
+the natural QA prompt. It does not launch an MCP client, answer permission
+prompts, or change settings. Start the fixture with a new private state path:
+
+```bash
+mkdir -p .harness-eval.live-results
+python3 evals/browser_quality.py \
+  --state .harness-eval.live-results/browser-private-new.json
+```
+
+The state parent must already exist and the state file must be new. The fixture
+prints its URL, temporary workspace and prompt. In that workspace, launch a new
+first-party client with a new project/conversation, for example:
+
+```bash
+agy --agent default --new-project --model gemini-3.8-flash-high \
+  --sandbox --mode=accept-edits --add-dir <workspace-returned-by-fixture>
+```
+
+Send the supplied prompt unchanged. For a cold-start trial, do not inspect
+`/mcp`, `/agents`, tool schemas or readiness before the task, send inventory
+hints, or deliberately wait for server readiness. Record whether the prompt was
+sent at launch or immediately after the first interactive UI yield. A panel
+inspection after a blocked task is a separate diagnostic; it cannot turn that
+task into a pass.
+
+Keep native Ask permissions. Approve only individually reviewed calls needed
+for the supplied loopback page and its button interaction; do not select
+always-allow or change global permissions. The task forbids commands, file
+reads/edits and direct page-API requests. If no native invoker is exposed or a
+call is denied, retain the blocked result rather than prompting a guessed alias
+or starting an alternate MCP client. End the fixture with Ctrl-C after scoring.
+
+The Python API `score_report(final_report, token, hits)` accepts only the final
+handoff text and the fixture's private token/hit data. It returns filtered
+booleans for the initial text, random confirmation, browser-like page and
+confirmation hits, and exactly one nonempty plain `Harness: REVIEW_VERIFY`
+line. Never supply thoughts, tool output or the whole terminal transcript as
+the final report. The HTTP User-Agent/hit checks alone cannot prove a button
+click or native dispatch: record the actual native tool interactions and Ask
+decisions separately. Worker independence is explicitly unverified.
+
+The state includes a random fixture token and local endpoint. Keep it in the
+ignored `.harness-eval.*` area; do not commit it, raw transcripts, conversation
+IDs or client diagnostics. Publish only filtered scores, startup conditions,
+approval counts and limits. Permission/card decisions remain operator actions;
+the scorer does not automate them.
+
+## Long conversation and native compaction
+
+`compaction_quality.py` supplies twelve cumulative planning turns with earlier
+requirements, corrections and a cancelled candidate. The final prompt omits
+their concrete values, and the scorer computes the optimal active selection
+independently. The task forbids tools, delegation, commands, edits, bookings and
+messages. Plan generation consumes no model quota:
+
+```bash
+python3 evals/compaction_quality.py
+python3 evals/compaction_quality.py --archive-batches 16
+```
+
+After authorizing model execution, prepare real history in an isolated
+workspace with private state:
+
+```bash
+python3 evals/compaction_quality.py --run \
+  --model gemini-3.8-flash-high --workspace <isolated-workspace> \
+  --state-path .harness-eval.live-results/compaction-private-new.json \
+  --timeout 180 --archive-batches 0
+```
+
+The CLI performs preparation only; it does not claim compaction or finalize the
+score. Its default transport starts one public NDJSON client per turn. The
+Python API also supports `NativePlanningSession` as `turn_runner` for one
+persistent public stream per stage. Use it with `prepare`, `extend_history` and
+`finish`; retain the same model, workspace, conversation and observed native
+turn count, and close each stage before inspecting the native UI. Failed native
+turns are not successful user turns; the persistent adapter permits at most one
+explicitly observed failed turn in its initial resume accounting. Do not infer
+this allowance from an unknown error.
+
+`extend_history` adds excluded Cafe alternatives in bounded stages. Each batch
+is at most 50 KiB, at most 80 batches are allowed (about 4 MiB), and total actual
+user history is capped at 5 MiB. It persists the declared stage before sending
+turns; an interrupted stage remains incomplete and cannot be hidden by reducing
+its target. Stop at the authorized limit or after enough evidence, and record
+the actual completed turns/bytes. Keep the requested model/context: switching
+to a smaller context only to trigger compaction changes the experiment.
+
+Resume the same conversation in the first-party native UI to inspect context.
+Use `/compact` only when that client actually exposes it. A missing command,
+"Nothing to compact yet", a checkpoint, or model prose claiming compaction is
+not evidence. Construct `NativeCompactionEvidence` only from the separate
+native UI boundary: `native_ui_status("Conversation compacted", manual=False)` for a confirmed
+native automatic divider/status (use `manual=True` for an actual manual notification), or
+`native_ui_boundary("Compacted", before_context_tokens, after_context_tokens)`
+for the exact native divider with an observed context decrease. Both context
+measurements must refer to that conversation/boundary. Do not pass model text
+or a whole transcript into either constructor.
+
+`finish` refuses unobserved compaction by default. An explicit
+`diagnose_uncompacted=True` can score retention without compaction, but leaves
+the compaction `overall_pass` false and `post_compaction_user_turns` zero.
+The final score checks exact output shape/selection, early requirements,
+corrections, approval/no-message constraints, a valid Harness line, same
+conversation, complete preparation and zero observed task tool/subagent
+activity. If the authorized history limit is reached without compaction,
+report that limitation; a retention pass is not a post-compaction pass.
+
+Private state writes require an ignored `.harness-eval.*` path, reject symlink,
+nonregular and unrelated existing targets, and atomically replace eval-owned
+files with mode 0600. State contains the opaque conversation identity; keep it
+private. `finish` returns filtered scores and safe turn summaries rather than
+raw responses or identity. Event observers receive native events in memory;
+custom observers must whitelist any published metadata and never dump raw
+events. Use final cumulative usage counters for cost comparisons, not the sum
+of per-turn counters or cache plus total tokens.
+
 ## Opt-in quota benchmark
 
 `quota_benchmark.py` compares repeated runs of read-only, benchmark-enabled
@@ -272,3 +392,10 @@ events are deliberately discarded. See the official
 [Antigravity headless-mode contract](https://antigravity.google/docs/cli/headless/)
 for field definitions. A failed or timed-out sample is reported by error type
 without relaying CLI diagnostics that might contain private environment data.
+
+The [2026-10-13 live report](../docs/live-eval-2026-10-13-status-compaction.md) and
+[filtered results](results/2026-10-13-status-compaction.json) record a real Flash
+automatic-compaction 14/14 pass over 29 turns. Both strict cold browser trials
+failed safely; a separate readiness control executed four native MCP calls with
+one-time Ask approvals and a valid Harness footer. Readiness is a confound,
+not a cold-start success or an isolated policy improvement.

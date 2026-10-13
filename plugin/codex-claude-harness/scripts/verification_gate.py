@@ -1608,6 +1608,8 @@ def _command_contains_check(command: str, depth: int = 0) -> bool:
 
 
 def _event(name: str, args: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    if name == "call_mcp_tool":
+        return {"kind": "mcp-handoff"}
     if name in WRITE_TOOLS and _is_workspace_write(args, payload):
         path = _workspace_relative_target(args, payload)
         return {
@@ -2147,6 +2149,12 @@ def _apply_event(state: dict[str, Any], event: dict[str, Any], step: int) -> boo
     if contract.get("version") == 2 and step <= contract["originStep"]:
         return False
     kind = event.get("kind")
+    if kind == "mcp-handoff":
+        previous = state.get("lastMcpStep", -1)
+        if type(previous) is not int or step > previous:
+            state["lastMcpStep"] = step
+            return True
+        return False
     mixed = kind == EVIDENCE and event.get("containsMutation") is True
     if mixed:
         _apply_event(state, {"kind": MUTATION, "requiresBehavioral": True}, step)
@@ -2248,7 +2256,7 @@ def _handle_post(payload: dict[str, Any]) -> None:
         return
 
     event = _event(name, args, payload)
-    if payload.get("error"):
+    if payload.get("error") and name != "call_mcp_tool":
         if event.get("kind") == MUTATION or event.get("containsMutation") is True:
             # Earlier segments in an `&&` chain may have changed files before a
             # later check failed, even when the chain's final kind is evidence.
@@ -2288,6 +2296,49 @@ def _normal_idle_stop(payload: dict[str, Any]) -> bool:
     )
 
 
+def _mcp_handoff_status(
+    payload: dict[str, Any], state: dict[str, Any],
+) -> tuple[str, Optional[int]]:
+    """Format reminder only: observed MCP calls never become passing evidence."""
+    # Antigravity's HookArgsCommon exposes parentConversationId for leaf work.
+    # Unknown/non-string identity metadata cannot establish a main handoff.
+    parent = payload.get("parentConversationId", "")
+    if not isinstance(parent, str) or parent:
+        return "exempt", None
+    latest = _latest_model_response(payload)
+    records = _transcript_records(payload)
+    if latest is None or records is None:
+        return "unavailable", None
+    content, user_step, response_step = latest
+    request = _latest_user_request(payload, records)
+    user_steps = [record.get("step_index") for record in records
+                  if str(record.get("source", "")).upper() in {"USER", "USER_EXPLICIT"}
+                  and str(record.get("type", "")).upper() in {"REQUEST", "USER_INPUT"}]
+    if (request is None or request[1] != user_step
+            or any(type(step) is not int or step < 0 for step in user_steps)
+            or any(left >= right for left, right in zip(user_steps, user_steps[1:]))):
+        return "unavailable", None
+    mcp_step = state.get("lastMcpStep")
+    if type(mcp_step) is not int or not user_step < mcp_step < response_step:
+        return "exempt", user_step
+    # Honor explicit constrained-output instructions; do not infer an exception
+    # from JSON-looking model output, which could hide an omitted status line.
+    if re.search(
+        r"\b(?:reply|respond|answer|output|return)\s+(?:(?:with|in)\s+)?(?:only|exactly)\b"
+        r"|\b(?:do not|don't|omit|without)\s+(?:include\s+|add\s+)?(?:a\s+|the\s+)?Harness\b"
+        r"|\b(?:chỉ trả lời|chỉ xuất|trả lời chính xác|không thêm dòng Harness)\b",
+        request[0], re.IGNORECASE,
+    ):
+        return "exempt", user_step
+    visible = _without_markdown_code_or_images(content)
+    pattern = (r"^Harness: (?:DIRECT|LOCAL_LOOKUP|RESEARCH|IMPLEMENT|COMPLEX_IMPLEMENT|"
+               r"REVIEW_ONLY|REVIEW_VERIFY); passed: ([^\n;]+); failed/skipped: ([^\n]+)$")
+    lines = re.findall(r"^Harness:.*$", visible, re.MULTILINE)
+    match = re.fullmatch(pattern, lines[0]) if len(lines) == 1 else None
+    valid = match is not None and all(field.strip() for field in match.groups())
+    return ("valid" if valid else "missing"), user_step
+
+
 def _handle_stop(payload: dict[str, Any]) -> None:
     if not _normal_idle_stop(payload):
         _emit({"decision": "allow"})
@@ -2302,6 +2353,21 @@ def _handle_stop(payload: dict[str, Any]) -> None:
         state_changed = False
         continue_reasons: list[str] = []
         warnings: list[str] = []
+        handoff_status, handoff_user_step = _mcp_handoff_status(payload, state)
+        if handoff_status == "missing":
+            if state.get("mcpStatusReminderUserStep") != handoff_user_step:
+                state["mcpStatusReminderUserStep"] = handoff_user_step
+                state_changed = True
+                continue_reasons.append(
+                    "Main MCP handoff is missing one plain status line: "
+                    "Harness: <ROUTE>; passed: ...; failed/skipped: ... . "
+                    "Replace the response and report only actual observed results and limits; "
+                    "a tool call alone is not a pass. Do not rerun tools or change permissions "
+                    "just to repair this line. Leaf assignments and explicit user exact-output "
+                    "formats are exempt. This format reminder retries once per user turn."
+                )
+            else:
+                warnings.append("MCP handoff status is still missing; allowing stop after one format reminder.")
         completion, completion_reason = _completion_status(payload, state)
         if completion == "invalid":
             continue_reasons.append(
