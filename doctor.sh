@@ -16,7 +16,9 @@ printf '[ok] agy: %s\n' "${agy_executable}"
 "${agy_executable}" --version
 
 plugin_list="$("${agy_executable}" plugin list)"
-if [[ "${plugin_list}" != *'"name": "codex-claude-harness"'* ]]; then
+# Accept both the JSON form and the human-readable list form (CLI >= 1.3.x).
+if [[ "${plugin_list}" != *'"name": "codex-claude-harness"'* ]] && \
+  [[ "${plugin_list}" != *"- codex-claude-harness"* ]]; then
   printf '[fail] codex-claude-harness is not installed. Run ./install.sh.\n' >&2
   exit 1
 fi

@@ -20,7 +20,8 @@ Write-Host "[ok] agy: $agyExecutable"
 & $agyExecutable --version
 
 $pluginList = & $agyExecutable plugin list | Out-String
-if ($pluginList -notmatch '"name": "codex-claude-harness"') {
+# Accept both the JSON form and the human-readable list form (CLI >= 1.3.x).
+if ($pluginList -notmatch '"name": "codex-claude-harness"' -and $pluginList -notmatch '- codex-claude-harness') {
     Write-Host "[fail] codex-claude-harness is not installed. Run .\install.ps1." -ForegroundColor Red
     exit 1
 }

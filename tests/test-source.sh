@@ -744,7 +744,8 @@ case "${1:-}" in
   --version) printf 'agy fixture\n' ;;
   plugin)
     if [[ "${2:-}" == list ]]; then
-      printf '[{"name": "codex-claude-harness"}]\n'
+      # Mirror the human-readable list format of the real CLI (>= 1.3.x).
+      printf 'Installed plugins:\n- codex-claude-harness (enabled)\n'
     fi
     ;;
   models) printf 'gemini-3.8-flash-high\n' ;;
