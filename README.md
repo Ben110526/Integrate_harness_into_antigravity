@@ -110,7 +110,7 @@ The harness automatically determines task complexity and selects the optimal exe
 | `DIRECT` | Conceptual explanations, general questions without code edits | Direct immediate answer |
 | `LOCAL_LOOKUP` | Single file or symbol lookup | Up to 2 file reads, no subagent overhead |
 | `RESEARCH` | Multi-file architecture analysis, complex root-cause diagnosis | Activates independent `harness-researcher` |
-| `IMPLEMENT` | Localized, low-risk changes | Inline fast path (≤ 10 lines), or verifier scope review → main implementation → fresh verifier delivery review; implementer optional for a useful split or explicit request |
+| `IMPLEMENT` | Localized, low-risk changes | Inline fast path for eligible tiny edits. Otherwise the verifier reviews scope, each independent implementation unit gets its own author, and the verifier reviews the combined result. The coordinator can implement a single unit directly. |
 | `COMPLEX_IMPLEMENT` | Major features, public API changes, auth, migrations, concurrency, security | Researcher → Plan (AC IDs) → Independent Scope Review → Implementer → Parallel Delivery Reviewer & Verifier |
 
 > [!NOTE]
@@ -119,6 +119,41 @@ The harness automatically determines task complexity and selects the optimal exe
 > - `REVIEW_VERIFY`: Concrete bug diagnosis, runtime behavior, security audits, or modified-code reviews, pairing `harness-reviewer` with `harness-verifier`.
 
 Implementation outside the inline fast path keeps a version-2 acceptance contract across user turns, with a stable task ID and sequential revisions. Follow-ups refine the active task; progress questions and compaction do not erase earlier requirements. An independent scope review checks the full request before writes, and a delivery review explains the relevant evidence for each acceptance criterion after the final change. Explicit user scope changes or task replacement are recorded, and unfinished requirements remain visible: 2/4 passed means partial. See the [task completion protocol](docs/task-completion.md) for formats and enforcement limits; review independence and test relevance still require human or agent judgment.
+
+### Coordinating parallel work
+
+An ordinary request for two or more independently implementable outcomes triggers one `harness-implementer` per outcome after scope review. Each worker needs a separate write scope and enough information to finish without waiting for another worker's output. A project with date and currency formatters could use this prompt.
+
+> Add tests for date formatting at midnight UTC and currency rounding to two decimal places. Put each set of cases in its formatter's test file, then run `npm test` on the combined changes.
+
+Each assignment identifies its owner, writable files, relevant acceptance criteria and focused checks. The coordinator dispatches the independent units before waiting for handoffs. Shared edits and downstream work are ordered by dependency. Once every owner has handed back their changes, the coordinator inspects the combined diff, runs the relevant suite, and sends that evidence to the independent verifier. The final report identifies each owner and their files, the combined test result and any blockers.
+
+To use Google's native Swarm, prefix the same prompt with `/swarm` in a supported Antigravity App or CLI. The existing Swarm workers and verifier use its board for assignments, blockers, and results. In the CLI, open `/swarm board` to follow them. Google introduced the preview in CLI 1.5.5 for Google AI Pro and Ultra subscribers, and each worker uses quota. [Swarm guide](https://antigravity.google/docs/swarm) · [CLI 1.5.5 release](https://github.com/google-antigravity/antigravity-cli/releases/tag/1.5.5)
+
+The harness marks a criterion as verified only when the coordinator has check evidence from the combined changes. If a native session exposes only worker reports for that criterion, it stays unverified. An ordinary `agy` session lets the coordinator run the final check directly.
+
+### Resuming an interrupted worker
+
+After a worker hits a quota limit or its request times out, resume the original coordinator conversation in its working directory. The harness reconciles recorded assignments and worker messages with the existing diff. It asks the original author for any missing handoff, then runs the combined checks and requests fresh independent review.
+
+On POSIX, a scheduler can run `python3 /path/to/installed/plugin/scripts/resume_after_quota.py JOB.json` when the provider's reset is due. The job file is private (mode `0600`) and names a private results directory (mode `0700`). It takes the following form.
+
+```json
+{
+  "version": 1,
+  "workspace": "/absolute/path/to/original/workspace",
+  "conversation": "<original-coordinator-uuid>",
+  "agy": "/absolute/path/to/agy",
+  "notBefore": "2026-11-19T07:00:36Z",
+  "resultsDirectory": "/absolute/path/to/private/job/results"
+}
+```
+
+Omit `mode` to use the CLI's configured execution mode. If the original session had an explicit mode, set the same value in the job. A call before `notBefore` returns `scheduled`. At or after the deadline, the runner records its submission before launching the native CLI. Inspect `status.json` in the results directory for the native status, process exit and any reported acceptance claim. If an attempt was interrupted, inspect the original conversation before scheduling another attempt. [Task completion and handoffs](docs/task-completion.md)
+
+On failure, `diagnostics` identifies a message from the current coordinator step, stderr or the terminal result. A resumed CLI can repeat an old quota message in its result. The runner calculates `retryNotBefore` only from a new coordinator step that reports a reset time. If the only quota message is in the terminal result, check the active account’s `/usage` for its current limit.
+
+Jobs default to a 1,800-second CLI deadline. Set the optional integer `printTimeoutSeconds` to a positive number of seconds for another deadline, or to `0` for a supervised run that waits until the CLI exits. When a completed parent response matches the acceptance claim, `claimStep` records its step for comparison with the verifier’s evidence.
 
 <details>
 <summary><b>⚡ Auto-Approving Allowed Commands (Terminal Permissions)</b></summary>

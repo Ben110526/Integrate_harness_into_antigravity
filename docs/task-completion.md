@@ -14,7 +14,11 @@ A read-only status reply needs no new contract. If execution resumes or a fresh 
 
 For implementation outside the strict inline fast path, main maps every explicit requirement and constraint to stable `AC-*` IDs. Each acceptance criterion describes observable behavior, including error paths or constraints when requested. Preserve requirements without omission or dilution; do not substitute a simpler feature. `verification` is `behavioral` for executable behavior and `static` for static acceptance.
 
-Main uses Antigravity's `write_to_file` with `IsArtifact: true` to create an artifact named `harness-task-contract.json`. Its `CodeContent` is JSON:
+Main uses the file-writing interface available in the current Antigravity client
+to create `harness-task-contract.json` inside the observed artifact directory:
+`write_to_file` uses `TargetFile`, JSON `CodeContent` and `IsArtifact: true`;
+native `write_file` uses an absolute `Path` and JSON `Content`. Registration still
+requires an observed successful write to that exact artifact location. The JSON is:
 
 ```json
 {
@@ -45,7 +49,7 @@ Switch tasks only when the user explicitly requests replacement. The first contr
 
 ## Independently review full coverage before writes
 
-Before implementation outside the inline fast path, invoke an independent reviewer with the cumulative user request, full contract and relevant source contracts. The reviewer checks every requested outcome, constraint and error path against the acceptance inventory, identifies omissions or dilution, and returns explicit coverage. For normal low-risk `IMPLEMENT`, the independent verifier owns this scope preflight and is resumed for a fresh delivery assessment. Main may implement directly after scope passes; delegate implementation when the user requests it or independent parallel ownership/context isolation materially helps. The verifier remains read-only and independent from the author, including main, and main cannot replace that assessment with self-review. Do not add a separate reviewer merely to satisfy the generic word "review". This does not change cumulative v2 registration, scope-before-write, current evidence, fresh delivery review, Ask permissions or inline exclusions. Complex work keeps the independent reviewer and verifier. This preflight is distinct from reviewing the implementation afterward. Main persists the reviewer report through `write_to_file` with `IsArtifact: true` as `harness-acceptance-review.json`:
+Before implementation outside the inline fast path, invoke an independent reviewer with the cumulative user request, full contract and relevant source contracts. The reviewer checks every requested outcome, constraint and error path against the acceptance inventory, identifies omissions or dilution, and returns explicit coverage. For normal low-risk `IMPLEMENT`, the independent verifier owns this scope preflight and is resumed for a fresh delivery assessment. After scope passes, the coordinator gives each of two or more independently implementable units to a distinct implementation worker. Look for separate writable paths, a check for each outcome and no dependency on another open assignment. A single unit can be implemented directly. Each worker hands back its actual changes and checks. The coordinator reviews the combined diff and runs the applicable suite after the last handoff, then asks the independent verifier to assess that state. The handoff to the user names the owners and their files, test results and any blockers. Track these orchestration facts alongside the user’s acceptance criteria. The verifier remains read-only and independent from the author, including main, and main cannot replace that assessment with self-review. Do not add a separate reviewer merely to satisfy the generic word "review". This does not change cumulative v2 registration, scope-before-write, current evidence, fresh delivery review, Ask permissions or inline exclusions. Complex work keeps the independent reviewer and verifier. This preflight is distinct from reviewing the implementation afterward. Main persists the reviewer report through the same observed artifact writer as `harness-acceptance-review.json`:
 
 ```json
 {
@@ -63,6 +67,18 @@ Before implementation outside the inline fast path, invoke an independent review
 Before applying a business rule, find its source in the user's instructions or repository contracts and behavior. Expose conflicts. A labeled assumption does not establish acceptance. If a missing rule materially changes behavior, main requests clarification and pauses dependent work while independent work can continue. Never silently invent a default.
 
 The inline fast path remains exempt only when all existing eligibility conditions hold and the response declares `mode: inline-fast-path`. Routing and semantic eligibility remain policy controls; a marker cannot prove that the edit qualified.
+
+## Resume an interrupted worker
+
+Keep the original coordinator conversation, workspace and worker assignments when Antigravity reports a quota error or timeout. For a registered v2 task, the coordinator’s `.codex-claude-harness-verification.json` can carry a bounded `workerCheckpoint` from observed native dispatches, messages and interruptions. Use it to locate the known owner and last message in the same task. Compare the original assignment, actual worker report and current diff to identify the first unfinished action. If the checkpoint is missing, consult the same conversation’s dispatch and messages. An early interruption can leave completed edits and green worker tests on disk before the worker sends its report. Check whether a timed-out send actually arrived before requesting it again.
+
+When the provider permits another request, resume the exact coordinator with `agy --conversation <coordinator-id>` in the original workspace. Respect any retry or quota reset time reported by Antigravity. Contact the original worker through its known conversation and request the unfinished action. If edits and checks are already present, the worker can hand them back directly. On a new user turn, advance the existing task contract by one revision, preserve its criteria and obtain the reviews and check evidence required for that revision.
+
+After the last owner hands off, compare the reported paths with the combined diff, run the coordinator’s checks and obtain independent delivery review. Record the native CLI result status and process exit code separately from the acceptance decision. A recovered task can have passing tests while an earlier CLI invocation still reports an error.
+
+The recovery runner sends one user message on stdin with `--input-format stream-json --output-format stream-json --conversation <coordinator-id>`. It closes stdin after that message and waits for the native result and process exit. Antigravity has returned a historical error in the terminal result of a resumed conversation even when the latest turn completed. A passing review and exit code zero therefore still require an explicit native `SUCCESS` for release. [Headless CLI protocol](https://antigravity.google/docs/cli/headless/) · [Upstream issue #1048](https://github.com/google-antigravity/antigravity-cli/issues/1048)
+
+In CLI 1.5.6 the process can exit successfully for the current turn while the JSON writer carries an error from an older conversation step. Preserve the failed receipt and compare its error with the current user turn before scheduling another attempt. If the release requires a fresh native `SUCCESS`, rerun the original prompt in a new session on a separate checkout of the original baseline. Keep the recovered files in the original workspace. Score every criterion against the new run’s own worker handoffs, checks, review and native result, and retain both receipts.
 
 ## Record verification honestly
 
@@ -92,9 +108,37 @@ Include every active ID exactly once, `status` (`passed|failed|blocked|unverifie
 
 Reference the observed `stepIdx` of successful check tool calls. Never invent a command execution, step ID, exit status or test result. Main must rerun a relevant check when subagent execution is not visible in its hook state. Preserve later failures even when earlier checks passed. Do not weaken assertions, skip failing tests, replace real integration with a mock, or present a placeholder/stub as delivered behavior.
 
-`PreInvocation` can supply a separate ephemeral observed-ID advisory on each supported invocation. It derives the current user step from the bounded validated transcript, never from `initialNumSteps`, and includes only numeric current-user/evidence-floor/check IDs. It omits the advisory when user evidence is missing, truncated, duplicated, out of order or otherwise unsafe. An earlier request's contract/check state cannot supply candidate IDs for the current request. Current check candidates share Stop's freshness, later-failure and verified ordered-chain filters; Stop additionally requires evidence to precede the response being validated. Each advisory is at most 1,024 bytes and includes no request or command content, paths or credentials; it neither creates nor changes state.
+`PreInvocation` can supply a separate ephemeral observed-ID advisory on each supported invocation. It derives the current user step from the bounded validated transcript, never from `initialNumSteps`, and supplies numeric current-user/evidence-floor/check IDs. A validated artifact directory may be appended as bounded JSON-quoted callback data so native writers can use an absolute path without searching private directories. It omits the advisory when user evidence is missing, truncated, duplicated, out of order or otherwise unsafe. An earlier request's contract/check state cannot supply candidate IDs for the current request. Current check candidates share Stop's freshness, later-failure and verified ordered-chain filters; Stop additionally requires evidence to precede the response being validated. Each advisory is at most 1,024 bytes and includes no request or command content or credentials. Before selecting candidates, the hook can update an existing pending check using terminal evidence that has since appeared.
 
-The advisory is for main's contract registration/reporting only when that workflow is already required. It does not require a contract for read-only work or the eligible inline fast path. Candidates still need AC relevance and a current matching independent delivery review; no success, permission or scope is established by receiving an ID hint. MCP/stack/runtime discovery remains limited to the first invocation. Source support for `ephemeralMessage` does not prove that a particular live session received the hint or that it reduced latency. Ask permissions and completion enforcement are unchanged. If the hint is unavailable, use observed artifact evidence or disclose the gap; never guess IDs.
+The transcript reader supports `transcript.jsonl` and the `transcript_full.jsonl`
+filename observed from CLI 1.4.7. Both must remain inside the supplied artifact
+directory before and after resolving paths. A bounded read drops its incomplete
+first line before decoding UTF-8; malformed retained records still make the
+transcript unavailable.
+
+`PostToolUse` can arrive before Antigravity writes the terminal result. In a
+live CLI 1.5.6 probe, both passing and failing tests had an empty callback
+`error`. Their records were still missing at the callback, and a longer
+command had status `RUNNING`. The gate retains bounded metadata for checks it
+observed. On a later `PreInvocation`, `PostToolUse`, or `Stop`, it can
+reconcile a pending check with a unique, untruncated `MODEL`/`GENERIC`
+record for that same step in the same conversation.
+
+In the CLI 1.4.7 and 1.5.6 terminal records, Antigravity writes the process
+exit code in its own header, before the command's output. A completed check
+with exit code zero can support acceptance. A nonzero exit records failure,
+even when the callback error was empty. Text printed by a test cannot supply
+the exit code. Pending records store a command fingerprint and step metadata
+without command text or output. The hook runs no checks and does not poll
+processes. If the corresponding terminal evidence stays missing, truncated,
+ambiguous or unsupported, rerun a relevant check or report the criterion
+unverified.
+
+Upgrading this evidence format invalidates previously cached check events and
+successful evidence pointers. The gate retains task, edit and unresolved-failure
+history. Run fresh checks before using an old conversation's acceptance reports.
+
+The advisory supports the coordinator's registered implementation workflow. When the current v2 contract has no recorded product write or delivery review, it also reminds the coordinator to dispatch any unassigned independent implementation units, reuse existing owners and request independent verification after all handoffs. It does not require a contract for read-only work or the eligible inline fast path. Candidates still need AC relevance and a current matching independent delivery review; no success, permission or scope is established by receiving an ID hint. MCP/stack/runtime discovery remains limited to the first invocation. Source support for `ephemeralMessage` does not prove that a particular live session received the hint or that it reduced latency. Ask permissions and completion enforcement are unchanged. If the hint is unavailable, use observed artifact evidence or disclose the gap; never guess IDs.
 
 If tool step numbers are not shown in the client, read the conversation artifact `.codex-claude-harness-verification.json` using `view_file`. Its bounded `checkEvents` list supplies observed `step`, `success` and `behavioral` values. The `command` field is SHA-256 of the exact `CommandLine`, a NUL character, and `Cwd`; it identifies a rerun without storing command text or output. Match your executed commands to these entries; never guess step numbers. Only the latest 128 check events are retained, so rerun any required evidence that has aged out. Outstanding failed checks persist across turns of the active task and require a successful rerun of the same command before `complete`, even if other files were edited meanwhile. A progress question or follow-up does not clear this failure debt. Failed mixed formatting/check chains also remain outstanding.
 
@@ -117,7 +161,9 @@ For example, the request is: "validate the email, prevent duplicate submissions,
 HARNESS_RESULT: {"taskId":"signup-1","revision":1,"status":"partial","requirements":[{"id":"AC-1","status":"passed","evidenceSteps":[21]},{"id":"AC-2","status":"passed","evidenceSteps":[22]},{"id":"AC-3","status":"unverified","evidenceSteps":[],"reason":"Persistence acceptance has not been verified."},{"id":"AC-4","status":"blocked","evidenceSteps":[],"reason":"The required email delivery configuration is unavailable."}]}
 ```
 
-Only main emits the final result envelope; workers return their evidence without a `HARNESS_RESULT` marker. Reconcile the active contract, reviews and observed check IDs before emitting it. If Stop requests a correction, the new response replaces the earlier response: do not quote or concatenate earlier envelopes, restart valid scope reviews, or repeat adequate checks merely to repair report fields. The gate supplies bounded observed current-user/evidence-floor/check IDs for repair, without command text, paths or request content. Eligible check IDs are candidates only; they still need relevant AC coverage and a current matching independent delivery review. Missing, stale or failed checks still need correction.
+Only main emits the final result envelope; workers return their evidence without a `HARNESS_RESULT` marker. When the runtime supplies a nonblank `parentConversationId` distinct from the current conversation, the worker skips the main contract advisory and completion envelope gate. Its own edits still receive verification and citation checks. The coordinator's hook cannot order its check steps against writes in another conversation. Wait for every writer to hand off and run the final checks on the integrated workspace, including when an earlier coordinator check was green. Worker messages and board posts cannot supply coordinator check IDs.
+
+Reconcile the active contract, reviews and observed check IDs before emitting the envelope. If Stop requests a correction, the new response replaces the earlier response: do not quote or concatenate earlier envelopes, restart valid scope reviews, or repeat adequate checks merely to repair report fields. The gate supplies bounded observed current-user/evidence-floor/check IDs for repair, without command text, paths or request content. Eligible check IDs are candidates only; they still need relevant AC coverage and a current matching independent delivery review. Missing, stale or failed checks still need correction.
 
 The public CLI can aggregate a response before a Stop continuation with the replacement response in its terminal result. The gate checks only the latest compatible completed planner response. A consumer of CLI output must distinguish final response steps from the terminal aggregate; it must still reject multiple result envelopes within that final response. Do not simply choose the last marker from an aggregate or retrospectively rescore historical failures without retained response-step evidence.
 

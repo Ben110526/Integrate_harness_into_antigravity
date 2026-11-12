@@ -11,8 +11,17 @@ fail() {
 }
 
 printf '[check] policy sources stay synchronized\n'
-cmp -s global/GEMINI.md plugin/codex-claude-harness/rules/engineering-harness.md || \
-  fail 'global and plugin policies differ'
+python3 - <<'PY'
+from pathlib import Path
+
+global_policy = Path("global/GEMINI.md").read_bytes()
+plugin_rule = Path("plugin/codex-claude-harness/rules/engineering-harness.md").read_bytes()
+frontmatter = b"---\ntrigger: always_on\n---\n\n"
+if global_policy.startswith(b"---\n") or not plugin_rule.startswith(frontmatter):
+    raise SystemExit("plugin rule needs always_on frontmatter; global policy stays plain Markdown")
+if plugin_rule[len(frontmatter):] != global_policy:
+    raise SystemExit("global policy and plugin rule body differ")
+PY
 
 printf '[check] shell syntax\n'
 shell_files=(install.sh uninstall.sh doctor.sh install.command evals/run-smoke.sh scripts/update-checksums.sh)
@@ -24,7 +33,7 @@ fi
 bash -n "${shell_files[@]}"
 
 printf '[check] eval, policy, and lifecycle fixture coverage\n'
-python3 -m unittest -q tests/test_evals.py tests/test_policy.py tests/test_lifecycle_guard.py tests/test_verification_gate.py tests/test_task_completion.py tests/test_multiturn_completion.py tests/test_output_quality_evals.py tests/test_browser_quality.py tests/test_compaction_evals.py
+python3 -m unittest -q tests/test_evals.py tests/test_policy.py tests/test_lifecycle_guard.py tests/test_verification_gate.py tests/test_task_completion.py tests/test_multiturn_completion.py tests/test_output_quality_evals.py tests/test_browser_quality.py tests/test_compaction_evals.py tests/test_resume_after_quota.py
 
 printf '[check] strict MCP profile renderer\n'
 command -v node >/dev/null 2>&1 || fail 'Node.js is required for MCP profile renderer checks'
@@ -55,17 +64,21 @@ hooks = json.loads((root / "plugin/codex-claude-harness/hooks.json").read_text(e
 if "SessionStart" in json.dumps(hooks):
     raise SystemExit("project context must use supported PreInvocation, not SessionStart")
 if hooks.get("security-gate", {}).get("PreToolUse", [{}])[0].get("matcher") != (
-    "write_to_file|replace_file_content|multi_replace_file_content|run_command|call_mcp_tool"
+    "write_file|write_to_file|replace_file_content|multi_replace_file_content|run_command|call_mcp_tool"
 ):
     raise SystemExit("security gate must inspect every write, terminal, and MCP tool")
 if "PreInvocation" not in hooks.get("project-context", {}):
     raise SystemExit("bounded project context must run through PreInvocation")
 if hooks.get("auto-format", {}).get("PostToolUse", [{}])[0].get("matcher") != (
-    "write_to_file|replace_file_content|multi_replace_file_content"
+    "write_file|write_to_file|replace_file_content|multi_replace_file_content"
 ):
     raise SystemExit("auto-format must run only after successful-capable write tools")
 if not {"PostToolUse", "Stop"}.issubset(hooks.get("verification-gate", {})):
     raise SystemExit("verification gate registration is incomplete")
+if hooks["verification-gate"]["PostToolUse"][0].get("matcher") != (
+    "write_file|write_to_file|replace_file_content|multi_replace_file_content|run_command|call_mcp_tool"
+):
+    raise SystemExit("verification gate must observe native and legacy writes")
 guard_source = (root / "plugin/codex-claude-harness/scripts/lifecycle_guard.py").read_text(encoding="utf-8")
 launcher_source = (root / "plugin/codex-claude-harness/scripts/lifecycle_guard.cmd").read_text(encoding="utf-8")
 verification_launcher = (root / "plugin/codex-claude-harness/scripts/verification_gate.cmd").read_text(encoding="utf-8")
@@ -309,7 +322,7 @@ real_node="$(command -v node || true)"
 [[ -n "${real_node}" ]] || fail 'Node.js is required for installer fixture checks'
 export HARNESS_TEST_REAL_NODE="${real_node}"
 mkdir -p -- "${fake_bin}" "${fake_home}/.gemini" "${fake_tmp}"
-printf '# Existing user rule\n\n- Keep this line.\n' > "${fake_home}/.gemini/GEMINI.md"
+printf '# Existing user rule\n\n- Keep this line.\n- Giữ nguyên quy tắc của tôi.\n- Example marker: <!-- auto-harness:start --> is literal prose.\n' > "${fake_home}/.gemini/GEMINI.md"
 
 cat > "${fake_bin}/agy" <<'SH'
 #!/usr/bin/env bash
@@ -425,7 +438,7 @@ done
 
 policy_target="${fake_home}/.gemini/GEMINI.md"
 grep -Fq -- '- Keep this line.' "${policy_target}" || fail 'installer removed existing user policy'
-[[ "$(grep -Fc '<!-- auto-harness:start -->' "${policy_target}")" == "1" ]] || \
+[[ "$(grep -Fxc '<!-- auto-harness:start -->' "${policy_target}")" == "1" ]] || \
   fail 'installer duplicated the managed policy start marker'
 [[ "$(grep -Fc '<!-- auto-harness:end -->' "${policy_target}")" == "1" ]] || \
   fail 'installer duplicated the managed policy end marker'
@@ -662,13 +675,41 @@ fi
 grep -Fq 'without paths, credentials, or wildcards' "${test_root}/install-invalid-origin.log" || \
   fail 'installer did not explain the rejected Playwright origin'
 
-printf '[check] uninstaller restores the pre-install policy and removes the plugin\n'
+printf '[check] malformed policy blocks never discard user rules\n'
+cp -- "${policy_target}" "${test_root}/valid-policy.md"
+cp -- "${policy_target}.bak" "${test_root}/original-policy-backup.md"
+printf '\n<!-- auto-harness:start -->\n- Keep this trailing user rule.\n' >> "${policy_target}"
+cp -- "${policy_target}" "${test_root}/malformed-policy.md"
+if HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${fake_bin}:${PATH}" \
+  ./install.sh --skip-mcp > "${test_root}/install-malformed-policy.log" 2>&1; then
+  fail 'installer accepted an unterminated managed policy block'
+fi
+cmp -s "${policy_target}" "${test_root}/malformed-policy.md" || fail 'installer altered malformed user policy'
+cmp -s "${policy_target}.bak" "${test_root}/original-policy-backup.md" || fail 'installer altered the recovery backup'
+if HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${fake_bin}:${PATH}" \
+  ./uninstall.sh > "${test_root}/uninstall-malformed-policy.log" 2>&1; then
+  fail 'uninstaller accepted an unterminated managed policy block'
+fi
+cmp -s "${policy_target}" "${test_root}/malformed-policy.md" || fail 'uninstaller altered malformed user policy'
+cmp -s "${policy_target}.bak" "${test_root}/original-policy-backup.md" || fail 'uninstaller altered the recovery backup'
+cp -- "${test_root}/valid-policy.md" "${policy_target}"
+mkdir -p -- "${installed_plugin}"
+
+printf '[check] uninstaller preserves later user policy edits and removes the plugin\n'
+printf '\n- Added after installing the harness.\n' >> "${policy_target}"
 HOME="${fake_home}" TMPDIR="${fake_tmp}" PATH="${fake_bin}:${PATH}" \
   ./uninstall.sh > "${test_root}/uninstall.log"
 [[ ! -d "${installed_plugin}" ]] || fail 'uninstaller left the harness plugin directory behind'
-[[ ! -e "${policy_target}.bak" ]] || fail 'uninstaller left the policy backup behind'
+[[ -f "${policy_target}.bak" ]] || fail 'uninstaller removed the recovery backup'
 grep -Fq -- '- Keep this line.' "${policy_target}" || fail 'uninstaller lost the pre-existing user policy'
-if grep -Fq '<!-- auto-harness:start -->' "${policy_target}"; then
+grep -Fq -- '- Added after installing the harness.' "${policy_target}" || \
+  fail 'uninstaller lost user policy added after installation'
+if grep -Fq -- '- Added after installing the harness.' "${policy_target}.bak"; then
+  fail 'uninstaller changed the original recovery backup'
+fi
+grep -Fq -- '- Giữ nguyên quy tắc của tôi.' "${policy_target}" || fail 'uninstaller corrupted non-ASCII user policy'
+grep -Fq -- '- Example marker: <!-- auto-harness:start --> is literal prose.' "${policy_target}" || fail 'uninstaller removed an inline marker example'
+if grep -Fxq '<!-- auto-harness:start -->' "${policy_target}"; then
   fail 'uninstaller left the managed policy block behind'
 fi
 
@@ -706,6 +747,8 @@ for _ in 1 2; do
     HARNESS_SKIP_MCP_BOOTSTRAP=1 EXPECT_CORE_ONLY=1 \
     ./install.sh > "${test_root}/install-shell-path.log"
 done
+[[ ! -e "${shell_home}/.gemini/GEMINI.md.bak" ]] || \
+  fail 'fresh reinstall backed up its own managed policy'
 fish_config="${shell_home}/.config/fish/config.fish"
 if [[ "$(uname -s)" == "Darwin" ]]; then
   nu_config="${shell_home}/Library/Application Support/nushell/config.nu"

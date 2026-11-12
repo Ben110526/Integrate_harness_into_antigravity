@@ -1,0 +1,229 @@
+{
+  "experiment": "CSV reports from a fresh checkout with an outcome-only prompt",
+  "date": "2026-11-12",
+  "client": "Antigravity CLI 1.5.6",
+  "prompt": "Implement the two CSV reports described in README.md.",
+  "user_messages": 1,
+  "baseline_commit": "7e62aa6380f7615814c27afd4136a526cc220a40",
+  "baseline_public_tests": {
+    "attempted": 6,
+    "errors": 6
+  },
+  "baseline_external_tests": {
+    "attempted": 2,
+    "errors": 2
+  },
+  "session": {
+    "route": "IMPLEMENT",
+    "status": "complete",
+    "duration_seconds": 245.9
+  },
+  "native_requirements": [
+    {
+      "id": "AC-1",
+      "status": "passed",
+      "cited_steps": [
+        50,
+        77
+      ],
+      "native_exit_and_hook_confirmed": true,
+      "delivery_agrees": true
+    },
+    {
+      "id": "AC-2",
+      "status": "passed",
+      "cited_steps": [
+        50,
+        77
+      ],
+      "native_exit_and_hook_confirmed": true,
+      "delivery_agrees": true
+    }
+  ],
+  "original_rubric_passed": 2,
+  "original_rubric": {
+    "AC-1": {
+      "status": "passed",
+      "criterion": "Inventory report meets the original CSV behavior requirements.",
+      "checks": {
+        "public": {
+          "exit": 0,
+          "tests": 3,
+          "ok": true
+        },
+        "external": {
+          "exit": 0,
+          "tests": 1,
+          "ok": true
+        }
+      }
+    },
+    "AC-2": {
+      "status": "passed",
+      "criterion": "Sales report meets the original CSV behavior requirements.",
+      "checks": {
+        "public": {
+          "exit": 0,
+          "tests": 3,
+          "ok": true
+        },
+        "external": {
+          "exit": 0,
+          "tests": 1,
+          "ok": true
+        }
+      }
+    },
+    "AC-3": {
+      "status": "failed",
+      "criterion": "Two distinct implementation workers own one file each and preserve the original project scope.",
+      "reason": "The coordinator wrote both files. Only inventory.py and sales.py changed."
+    },
+    "AC-4": {
+      "status": "failed",
+      "criterion": "After both implementation handoffs, the coordinator runs the combined suite, obtains independent review and reports ownership, blockers and results.",
+      "reason": "Both the coordinator and an independent verifier ran the combined suite successfully. There were no implementation-worker handoffs and the final response did not identify file owners."
+    }
+  },
+  "implementation_workers": 0,
+  "coordinator_writes": [
+    {
+      "step": 44,
+      "file": "inventory.py",
+      "tool": "write_file"
+    },
+    {
+      "step": 47,
+      "file": "sales.py",
+      "tool": "write_file"
+    }
+  ],
+  "independent_verifier": {
+    "dispatch_step": 31,
+    "scope_received_step": 39,
+    "delivery_received_step": 62,
+    "worker_checks": [
+      {
+        "step": 13,
+        "type": "exact full suite",
+        "exit": 1,
+        "tests": 6,
+        "ok": false,
+        "diff_headers": []
+      },
+      {
+        "step": 15,
+        "type": "git status",
+        "exit": 0,
+        "tests": null,
+        "ok": null,
+        "diff_headers": []
+      },
+      {
+        "step": 22,
+        "type": "git diff",
+        "exit": 0,
+        "tests": null,
+        "ok": null,
+        "diff_headers": [
+          "inventory.py",
+          "sales.py"
+        ]
+      },
+      {
+        "step": 24,
+        "type": "other unittest invocation",
+        "exit": 0,
+        "tests": 6,
+        "ok": true,
+        "diff_headers": []
+      }
+    ]
+  },
+  "coordinator_checks": [
+    {
+      "step": 7,
+      "type": "git status",
+      "exit": 0,
+      "tests": null,
+      "ok": null,
+      "diff_headers": []
+    },
+    {
+      "step": 25,
+      "type": "exact full suite",
+      "exit": 1,
+      "tests": 6,
+      "ok": false,
+      "diff_headers": []
+    },
+    {
+      "step": 50,
+      "type": "other unittest invocation",
+      "exit": 0,
+      "tests": 6,
+      "ok": true,
+      "diff_headers": []
+    },
+    {
+      "step": 67,
+      "type": "git diff",
+      "exit": 0,
+      "tests": null,
+      "ok": null,
+      "diff_headers": [
+        "inventory.py",
+        "sales.py"
+      ]
+    },
+    {
+      "step": 77,
+      "type": "exact full suite",
+      "exit": 0,
+      "tests": 6,
+      "ok": true,
+      "diff_headers": []
+    }
+  ],
+  "hook_checks": [
+    {
+      "step": 25,
+      "hook_success": false,
+      "behavioral": true,
+      "native_exit": 1,
+      "coverage": "unittest"
+    },
+    {
+      "step": 50,
+      "hook_success": true,
+      "behavioral": true,
+      "native_exit": 0,
+      "coverage": "unittest"
+    },
+    {
+      "step": 77,
+      "hook_success": true,
+      "behavioral": true,
+      "native_exit": 0,
+      "coverage": "unittest"
+    }
+  ],
+  "pending_at_exit": 0,
+  "unresolved_failures_at_exit": 0,
+  "expected_files_changed": [
+    "inventory.py",
+    "sales.py"
+  ],
+  "other_files_changed": 0,
+  "git_diff_check_exit": 0,
+  "public_rerun": {
+    "exit": 0,
+    "tests": 6,
+    "ok": true
+  },
+  "external_rerun": {
+    "exit": 0,
+    "tests": 2,
+    "ok": true
+  }
+}

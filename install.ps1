@@ -377,12 +377,25 @@ $policyEndMarker = "<!-- auto-harness:end -->"
 New-Item -ItemType Directory -Force -Path $policyDirectory | Out-Null
 
 $existingPolicy = ""
+$policyEncoding = New-Object System.Text.UTF8Encoding($false, $true)
 if (Test-Path $policyTarget -PathType Leaf) {
-    $existingPolicy = Get-Content $policyTarget -Raw
+    $existingPolicy = [System.IO.File]::ReadAllText($policyTarget, $policyEncoding)
 }
-$managedPattern = [regex]::Escape($policyStartMarker) + "[\s\S]*?" + [regex]::Escape($policyEndMarker) + "\r?\n?"
+$hasManagedPolicy = [regex]::IsMatch($existingPolicy, "(?m)^" + [regex]::Escape($policyStartMarker) + "\r?$")
+$insideBlock = $false
+foreach ($line in ($existingPolicy -split "\r?\n")) {
+    if ($line -eq $policyStartMarker) {
+        if ($insideBlock) { throw "Malformed harness policy markers; current policy and backup were preserved." }
+        $insideBlock = $true
+    } elseif ($line -eq $policyEndMarker) {
+        if (-not $insideBlock) { throw "Malformed harness policy markers; current policy and backup were preserved." }
+        $insideBlock = $false
+    }
+}
+if ($insideBlock) { throw "Malformed harness policy markers; current policy and backup were preserved." }
+$managedPattern = "(?m)^" + [regex]::Escape($policyStartMarker) + "\r?\n[\s\S]*?^" + [regex]::Escape($policyEndMarker) + "(?:\r?\n|$)"
 $preservedPolicy = ([regex]::Replace($existingPolicy, $managedPattern, "")).TrimEnd()
-$managedPolicy = $policyStartMarker + [Environment]::NewLine + (Get-Content $policySource -Raw).TrimEnd() + [Environment]::NewLine + $policyEndMarker
+$managedPolicy = $policyStartMarker + [Environment]::NewLine + [System.IO.File]::ReadAllText($policySource, $policyEncoding).TrimEnd() + [Environment]::NewLine + $policyEndMarker
 if ($preservedPolicy) {
     $mergedPolicy = $preservedPolicy + [Environment]::NewLine + [Environment]::NewLine + $managedPolicy + [Environment]::NewLine
 } else {
@@ -395,10 +408,10 @@ $policyTempPath = Join-Path $policyDirectory ("GEMINI.md.tmp-" + [Guid]::NewGuid
 try {
     [System.IO.File]::WriteAllText($policyTempPath, $mergedPolicy, $utf8WithoutBom)
     if (Test-Path $policyTarget -PathType Leaf) {
-        # Keep the FIRST pre-install backup so repeat installs do not overwrite
-        # it with an already-managed policy (uninstall.ps1 restores it).
+        # Keep only a pre-harness recovery copy. Uninstall strips the current
+        # managed block rather than replacing later user edits with this copy.
         $policyBackupTarget = $policyTarget + ".bak"
-        if (Test-Path $policyBackupTarget -PathType Leaf) {
+        if ((Test-Path $policyBackupTarget -PathType Leaf) -or $hasManagedPolicy) {
             [System.IO.File]::Replace($policyTempPath, $policyTarget, $null)
         } else {
             [System.IO.File]::Replace($policyTempPath, $policyTarget, $policyBackupTarget)

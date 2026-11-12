@@ -8,6 +8,9 @@ not yet cut versioned releases, so entries are grouped by date.
 
 ### Security
 
+- Native `write_file(Path, Content, Overwrite)` receives the same secret checks
+  and verification invalidation as legacy file-writing tools. Protocol artifacts
+  register only after an observed write inside the current artifact directory.
 - DLP PreToolUse now covers `call_mcp_tool`: the hook matcher includes it and
   the guard scans the serialized MCP payload plus a flattened assignment view,
   so secret material can no longer leave through MCP tool arguments
@@ -17,10 +20,20 @@ not yet cut versioned releases, so entries are grouped by date.
 
 ### Added
 
-- `uninstall.sh` / `uninstall.ps1`: remove the plugin, restore the pre-install
-  `GEMINI.md` from the automatic `.bak` backup, and remove the pinned GitHub
-  MCP binary. `settings.json` is never touched (the installer never modifies
-  it).
+- Interrupted worker assignments retain their original owner and observed
+  handoff history. A dated, one-shot POSIX runner can resume the same native
+  conversation after a quota reset and record the CLI outcome separately
+  from the acceptance result.
+- Ordinary implementation requests with two or more independent units now
+  assign each unit to a distinct implementer. After the owners hand off,
+  the coordinator checks their combined changes and obtains independent
+  delivery review.
+- Parallel assignments now track owners, file scope, dependencies and checks
+  in the harness plan. The same handoff and verification workflow can use
+  the native board when the user starts `/swarm`.
+- `uninstall.sh` / `uninstall.ps1`: remove the plugin, strip only the managed
+  block from current `GEMINI.md`, retain the original `.bak` for recovery, and
+  remove the pinned GitHub MCP binary. `settings.json` is never touched.
 - `doctor.ps1`: Windows parity for the `doctor.sh` diagnostic health check.
 - `SECURITY.md` with a private reporting process.
 - The verification gate now flags partial/blocked results that follow a logic
@@ -37,6 +50,20 @@ not yet cut versioned releases, so entries are grouped by date.
 
 ### Fixed
 
+- The verification gate now recognizes checks whose terminal result appears
+  after `PostToolUse`. It matches the original step and uses the CLI's process
+  exit code, so a failed test with an empty callback error is recorded as a
+  failure. Checks with unresolved results stay unverified. Upgrading clears
+  older cached successes while preserving task, edit and unresolved-failure history.
+- Plugin policy includes explicit `trigger: always_on` frontmatter required by
+  the current Antigravity validator; its body still matches the global policy.
+- Verification reads the current CLI's `transcript_full.jsonl` as well as the
+  legacy `transcript.jsonl`, keeping both artifact-directory containment checks.
+  This restores observed request IDs needed before normal implementation.
+- Bounded transcript reads discard a cut-off first line before UTF-8 decoding,
+  so a split multibyte character cannot hide later complete request records.
+- Uninstall preserves user rules added after installation. Install/reinstall
+  reject malformed managed markers and avoid backing up already-managed policy.
 - The installers write the global policy atomically and keep the first
   pre-install `.bak` backup (PowerShell previously rewrote `GEMINI.md`
   in place with no backup and no atomicity).

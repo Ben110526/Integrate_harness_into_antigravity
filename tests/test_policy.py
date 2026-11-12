@@ -17,8 +17,10 @@ CLARIFY_SKILL = (
 )
 AGENT_DIRECTORY = ROOT / "plugin" / "codex-claude-harness" / "agents"
 BASELINE_BYTES = 9358
-# Fixed allowance for cumulative v2 registration and independent scope/delivery reports.
-COMPLETION_PROTOCOL_BUDGET_BYTES = 3600
+# Fixed allowance for cumulative v2 registration, reviews and native writer variants.
+COMPLETION_PROTOCOL_BUDGET_BYTES = 3728
+# Fixed CLI activation metadata; the policy body keeps its existing byte budget.
+PLUGIN_RULE_FRONTMATTER = b"---\ntrigger: always_on\n---\n\n"
 
 
 class PolicyTests(unittest.TestCase):
@@ -28,20 +30,48 @@ class PolicyTests(unittest.TestCase):
         self.policy = self.global_bytes.decode("utf-8")
 
     def test_policy_mirror_and_compression_budget(self) -> None:
-        self.assertEqual(self.global_bytes, self.plugin_bytes)
+        self.assertFalse(self.global_bytes.startswith(b"---\n"), "global policy must stay plain Markdown")
+        self.assertTrue(self.plugin_bytes.startswith(PLUGIN_RULE_FRONTMATTER), "plugin rule must declare always_on")
+        self.assertEqual(self.global_bytes, self.plugin_bytes[len(PLUGIN_RULE_FRONTMATTER):])
         size = len(self.global_bytes)
         self.assertGreaterEqual(size, BASELINE_BYTES * 0.70)
         self.assertLessEqual(size, BASELINE_BYTES * 0.82 + COMPLETION_PROTOCOL_BUDGET_BYTES)
+        self.assertEqual(len(self.plugin_bytes), size + len(PLUGIN_RULE_FRONTMATTER))
+        self.assertLessEqual(len(self.plugin_bytes), BASELINE_BYTES * 0.82
+                             + COMPLETION_PROTOCOL_BUDGET_BYTES + len(PLUGIN_RULE_FRONTMATTER))
+
+    def test_parallel_assignments_are_reachable_in_ordinary_and_native_sessions(self) -> None:
+        routing = next(line for line in self.policy.splitlines() if "`harness-plan` briefs" in line)
+        self.assertIn("invoke_subagent(", routing)
+        self.assertIn('Workspace="inherit"', routing)
+        self.assertIn("active user-started `/swarm`", routing)
+        self.assertIn("without a second team", routing)
+        plan = (PLUGIN_POLICY.parents[1] / "skills" / "harness-plan" / "SKILL.md").read_text()
+        for term in ("writable paths", "completion check", "stopped editing", "partial diff"):
+            self.assertIn(term, plan)
 
     def test_mcp_main_handoffs_require_status_with_user_format_and_leaf_exceptions(self) -> None:
         self.assertIn("browser QA is `REVIEW_VERIFY`", self.policy)
         self.assertIn("Main non-direct/MCP handoffs:", self.policy)
         self.assertIn("honor user exact formats; exempt leaves", self.policy)
 
+    def test_interrupted_writers_resume_the_missing_handoff(self) -> None:
+        plugin = PLUGIN_POLICY.parents[1]
+        plan = (plugin / "skills/harness-plan/SKILL.md").read_text()
+        implement = (plugin / "skills/harness-implement/SKILL.md").read_text()
+        worker = (AGENT_DIRECTORY / "harness-implementer.md").read_text()
+        self.assertIn("On 429/timeout keep edits and resume pending handoffs with their owners", self.policy)
+        self.assertIn("Check the existing conversation for the owner's actual report", plan)
+        self.assertIn("Honor a provider retry or reset time", plan)
+        self.assertIn("Keep a single active writer per path", plan)
+        self.assertIn("send the actual paths, checks and blockers in your existing conversation", worker)
+        self.assertIn("check the combined changes after the last owner reports and obtain fresh independent delivery", implement)
+
     def test_completion_and_business_rule_contracts_are_always_on(self) -> None:
         for required in (
             "without omission or dilution", "harness-task-contract.json",
-            "IsArtifact: true", "HARNESS_RESULT:", "evidenceSteps",
+            "IsArtifact: true", "write_file", "observed artifact directory",
+            "HARNESS_RESULT:", "evidenceSteps",
             "Unchanged rows stay immutable", "2/4 passed means partial",
             "Never invent business rules", "Assumptions are labeled",
             "cannot establish semantic request coverage",
@@ -202,11 +232,14 @@ class PolicyTests(unittest.TestCase):
         skill = (ROOT / "plugin/codex-claude-harness/skills/harness-implement/SKILL.md").read_text()
         implement_route = next(line for line in self.policy.splitlines() if line.startswith("- `IMPLEMENT`:"))
         complex_route = next(line for line in self.policy.splitlines() if line.startswith("- `COMPLEX_IMPLEMENT`:"))
-        self.assertIn("`harness-verifier` scope → main edits → fresh verifier delivery", implement_route)
-        self.assertIn("delegate `harness-implementer` for useful splits or explicit requests", implement_route)
-        self.assertIn("main implements directly", skill)
-        self.assertIn("user explicitly requests delegation", skill)
-        self.assertIn("independent parallel ownership or context isolation materially helps", skill)
+        self.assertIn("`harness-verifier` scope", implement_route)
+        self.assertIn("fresh verifier delivery", implement_route)
+        self.assertIn("two or more independent deliverables, assign each a separate `harness-implementer`", implement_route)
+        self.assertIn("Main may author an unsplit task", implement_route)
+        self.assertRegex(self.policy.casefold(), r"dispatch all ready owners[^.]*before waiting")
+        self.assertIn("Only owners edit assigned paths", self.policy)
+        self.assertIn("a distinct `harness-implementer` per independent deliverable", skill)
+        self.assertIn("Wait for every writer to hand off", skill)
         self.assertIn("main cannot assess its own delivery", skill)
         self.assertIn("After main or delegated implementation", skill)
         self.assertIn("scope must pass before writes", self.policy)

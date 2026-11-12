@@ -11,7 +11,7 @@ This repository uses Antigravity as the first-party model client. Apply this pol
 5. Verify in proportion to risk: start with targeted checks, then broader tests, lint, type checks, or builds when useful.
 6. Report the outcome, verification performed, and any real residual risk. Do not claim success when a required check failed or was not run.
 
-When the user explicitly requests delegation, or the active plan contains an independent bounded branch, you must start the worker with `invoke_subagent(TypeName=..., Role=..., Workspace="inherit", Prompt=...)` before doing that delegated work yourself. `send_message` is only for a subagent conversation that already exists; never search `~/.gemini` to discover an installed agent.
+When the user explicitly requests delegation or the active plan contains an independent bounded branch, start the worker before doing that work yourself. In ordinary sessions, use `invoke_subagent(TypeName=..., Role=..., Workspace="inherit", Prompt=...)`. `send_message` is only for an existing subagent conversation. Never search `~/.gemini` to discover an installed agent. In an active user-started `/swarm`, assign branches to members on its board. For two or more independently implementable and testable deliverables with disjoint writable paths, assign a separate implementation worker to each. Dispatch all ready owners after scope approval and before waiting for a handoff. After the last handoff, the coordinator checks ownership against the combined diff, runs the relevant tests and obtains independent delivery review. Report the actual file owners, test results and blockers.
 
 ## Communication
 

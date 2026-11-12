@@ -2,7 +2,7 @@
   "security-gate": {
     "PreToolUse": [
       {
-        "matcher": "write_to_file|replace_file_content|multi_replace_file_content|run_command|call_mcp_tool",
+        "matcher": "write_file|write_to_file|replace_file_content|multi_replace_file_content|run_command|call_mcp_tool",
         "hooks": [
           {
             "type": "command",
@@ -25,7 +25,7 @@
   "auto-format": {
     "PostToolUse": [
       {
-        "matcher": "write_to_file|replace_file_content|multi_replace_file_content",
+        "matcher": "write_file|write_to_file|replace_file_content|multi_replace_file_content",
         "hooks": [
           {
             "type": "command",
@@ -39,7 +39,7 @@
   "verification-gate": {
     "PostToolUse": [
       {
-        "matcher": "write_to_file|replace_file_content|multi_replace_file_content|run_command|call_mcp_tool",
+        "matcher": "write_file|write_to_file|replace_file_content|multi_replace_file_content|run_command|call_mcp_tool",
         "hooks": [
           {
             "type": "command",

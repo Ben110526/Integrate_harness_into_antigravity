@@ -1,0 +1,513 @@
+{
+  "experiment": "Resume the original second CSV task from the outstanding sales.py handoff",
+  "date": "2026-11-12",
+  "client": "Antigravity CLI 1.5.6",
+  "baselineCommit": "7e62aa6380f7615814c27afd4136a526cc220a40",
+  "originalPrompt": "Implement the two CSV reports described in README.md.",
+  "precedingReport": "2026-11-12-csv-auto-delegation.json",
+  "criteria": {
+    "AC-1": "Inventory CSV passes public and independent acceptance checks.",
+    "AC-2": "Sales CSV passes public and independent acceptance checks.",
+    "AC-3": "Two original implementation workers, one owner per file, actual handoffs, combined diff, no other file changes.",
+    "AC-4": "Post-handoff coordinator suite, independent delivery review and final report with owners, tests and blockers."
+  },
+  "attempts": [
+    {
+      "purpose": "Resume outstanding sales handoff",
+      "startedUtc": "2026-11-12T09:27:21Z",
+      "endedUtc": "2026-11-12T09:37:40Z",
+      "nativeStatus": "ERROR",
+      "cliExit": 0,
+      "nativeDiagnostic": "timeout",
+      "harnessClaim": {
+        "passed": 2,
+        "status": "complete",
+        "total": 2
+      },
+      "resumeUserStep": 58,
+      "owners": {
+        "inventory.py": {
+          "originalDispatch": 41,
+          "originalWrite": 9,
+          "progressFileUnchanged": true,
+          "handoff": 53,
+          "extraWriterActions": []
+        },
+        "sales.py": {
+          "originalDispatch": 44,
+          "originalWrite": 15,
+          "progressFileUnchanged": true,
+          "handoff": 107,
+          "extraWriterActions": []
+        }
+      },
+      "combinedDiffSteps": [
+        112
+      ],
+      "coordinatorSuiteSteps": [
+        115
+      ],
+      "verifierRequestSteps": [
+        118
+      ],
+      "originalVerifierDeliverySteps": [
+        123
+      ],
+      "finalResponseStep": 127,
+      "registeredFunctionalACs": 2,
+      "certifiedFunctionalACs": 2,
+      "finalIdentifiesActualOwners": true,
+      "finalReportsTests": true,
+      "finalReportsBlockers": true,
+      "parentProductWrites": [],
+      "scopeOfChangedFilesMatches": true,
+      "externalRerun": {
+        "inventory": {
+          "public3": true,
+          "independent1": true
+        },
+        "sales": {
+          "public3": true,
+          "independent1": true
+        }
+      },
+      "originalRubric": {
+        "AC-1": true,
+        "AC-2": true,
+        "AC-3": true,
+        "AC-4": true
+      },
+      "originalCriteriaPassed": 4,
+      "nativeSuccess": false,
+      "allRequestedConditionsMet": false,
+      "parentErrorStepsThisTurn": [
+        87
+      ]
+    },
+    {
+      "purpose": "Fresh delivery verification after transport timeout",
+      "startedUtc": "2026-11-12T09:38:59Z",
+      "endedUtc": "2026-11-12T09:44:33Z",
+      "nativeStatus": "ERROR",
+      "cliExit": 0,
+      "nativeDiagnostic": "timeout",
+      "harnessClaim": {
+        "passed": 2,
+        "status": "complete",
+        "total": 2
+      },
+      "resumeUserStep": 128,
+      "owners": {
+        "inventory.py": {
+          "originalDispatch": 41,
+          "originalWrite": 9,
+          "progressFileUnchanged": true,
+          "handoff": 53,
+          "extraWriterActions": []
+        },
+        "sales.py": {
+          "originalDispatch": 44,
+          "originalWrite": 15,
+          "progressFileUnchanged": true,
+          "handoff": 148,
+          "extraWriterActions": []
+        }
+      },
+      "combinedDiffSteps": [
+        150
+      ],
+      "coordinatorSuiteSteps": [
+        153
+      ],
+      "verifierRequestSteps": [
+        156
+      ],
+      "originalVerifierDeliverySteps": [
+        161
+      ],
+      "finalResponseStep": 165,
+      "registeredFunctionalACs": 2,
+      "certifiedFunctionalACs": 2,
+      "finalIdentifiesActualOwners": true,
+      "finalReportsTests": true,
+      "finalReportsBlockers": true,
+      "parentProductWrites": [],
+      "scopeOfChangedFilesMatches": true,
+      "externalRerun": {
+        "inventory": {
+          "public3": true,
+          "independent1": true
+        },
+        "sales": {
+          "public3": true,
+          "independent1": true
+        }
+      },
+      "originalRubric": {
+        "AC-1": true,
+        "AC-2": true,
+        "AC-3": true,
+        "AC-4": true
+      },
+      "originalCriteriaPassed": 4,
+      "nativeSuccess": false,
+      "allRequestedConditionsMet": false,
+      "parentErrorStepsThisTurn": []
+    },
+    {
+      "purpose": "Resume the same CSV task using stream-json input",
+      "startedUtc": "2026-11-12T09:48:50Z",
+      "endedUtc": "2026-11-12T10:05:53Z",
+      "nativeStatus": "ERROR",
+      "cliExit": 0,
+      "nativeDiagnostic": "timeout",
+      "harnessClaim": {
+        "passed": 2,
+        "status": "complete",
+        "total": 2
+      },
+      "resumeUserStep": 166,
+      "owners": {
+        "inventory.py": {
+          "originalDispatch": 41,
+          "originalWrite": 9,
+          "progressFileUnchanged": true,
+          "handoff": 53,
+          "extraWriterActions": []
+        },
+        "sales.py": {
+          "originalDispatch": 44,
+          "originalWrite": 15,
+          "progressFileUnchanged": true,
+          "handoff": 186,
+          "extraWriterActions": []
+        }
+      },
+      "combinedDiffSteps": [
+        188
+      ],
+      "coordinatorSuiteSteps": [
+        191
+      ],
+      "verifierRequestSteps": [
+        194
+      ],
+      "originalVerifierDeliverySteps": [
+        199
+      ],
+      "finalResponseStep": 203,
+      "registeredFunctionalACs": 2,
+      "certifiedFunctionalACs": 2,
+      "finalIdentifiesActualOwners": true,
+      "finalReportsTests": true,
+      "finalReportsBlockers": true,
+      "parentProductWrites": [],
+      "scopeOfChangedFilesMatches": true,
+      "externalRerun": {
+        "inventory": {
+          "public3": true,
+          "independent1": true
+        },
+        "sales": {
+          "public3": true,
+          "independent1": true
+        }
+      },
+      "originalRubric": {
+        "AC-1": true,
+        "AC-2": true,
+        "AC-3": true,
+        "AC-4": true
+      },
+      "originalCriteriaPassed": 4,
+      "nativeSuccess": false,
+      "allRequestedConditionsMet": false,
+      "observedStream": {
+        "observedUserInputs": [
+          166
+        ],
+        "observedErrorSteps": [],
+        "terminalHistoryMatches": [
+          87
+        ],
+        "terminalCount": 1,
+        "terminalErrorPresent": true
+      }
+    }
+  ],
+  "previousReleaseDecision": {
+    "reinstalled": false,
+    "pushed": false,
+    "reason": "Neither native invocation returned SUCCESS."
+  },
+  "diagnosis": {
+    "client": "Antigravity CLI 1.5.6",
+    "upstreamIssue": "https://github.com/google-antigravity/antigravity-cli/issues/1048",
+    "finding": "The headless JSON result reads the conversation snapshot, including historical errors. The process exit can reflect a completed current turn.",
+    "runnerChange": "Send one user turn via stdin; attribute diagnostics to the current parent step, stderr and the native result. Compute a new relative quota deadline only from fresh parent-step evidence. Require a fresh completed parent response for an acceptance claim."
+  },
+  "cleanReplay": {
+    "baselineCommit": "7e62aa6380f7615814c27afd4136a526cc220a40",
+    "originalPrompt": "Implement the two CSV reports described in README.md.",
+    "separateCheckout": true,
+    "firstInvocation": {
+      "freshNeutralPrompt": true,
+      "baselineAndScope": true,
+      "publicAndHeldOut": {
+        "inventory": {
+          "public3": true,
+          "independent1": true
+        },
+        "sales": {
+          "public3": true,
+          "independent1": true
+        }
+      },
+      "owners": {
+        "inventory.py": {
+          "dispatch": 74,
+          "writes": [
+            15
+          ],
+          "matchesFinal": true,
+          "handoff": 111
+        },
+        "sales.py": {
+          "dispatch": 77,
+          "writes": [
+            17
+          ],
+          "matchesFinal": true,
+          "handoff": 127
+        }
+      },
+      "combinedDiffSteps": [
+        129
+      ],
+      "combinedSuiteSteps": [
+        132
+      ],
+      "verifierDeliverySteps": [
+        159
+      ],
+      "currentHookAndReviewAgree": true,
+      "finalNamesActualOwners": true,
+      "finalReportsTests": true,
+      "finalReportsBlockers": true,
+      "finalResponseStep": 163,
+      "native": {
+        "identityAndStreamValid": true,
+        "finalStep": 163,
+        "claim": {
+          "status": "complete",
+          "passed": 2,
+          "total": 2
+        },
+        "nativeStatus": "ERROR",
+        "cliExit": 3,
+        "errorClass": null
+      },
+      "originalRubric": {
+        "AC-1": true,
+        "AC-2": true,
+        "AC-3": true,
+        "AC-4": true
+      },
+      "originalCriteriaPassed": 4,
+      "nativeSuccess": false,
+      "allRequestedConditionsMet": false
+    },
+    "observedDeadline": {
+      "printTimeoutSeconds": 1800,
+      "terminalElapsedSeconds": 1802.6,
+      "errorClass": "timeout"
+    },
+    "firstSupervisedContinuation": {
+      "cleanContinuation": true,
+      "originalParentFinalStep": 163,
+      "sameVerifierContinuity": false,
+      "replacementVerifier": {
+        "refusedOriginalDispatch": 31,
+        "refusedScopeSend": 183,
+        "replacementVerifierDispatch": 186,
+        "reason": "native_cross_project_messaging_refusal",
+        "freshScopeAndDeliveryFromSameReplacement": true
+      },
+      "native": {
+        "state": "finished",
+        "nativeStatus": "SUCCESS",
+        "cliExit": 0,
+        "claim": {
+          "passed": 1,
+          "status": "partial",
+          "total": 2
+        },
+        "claimStep": 318,
+        "reason": null
+      },
+      "currentUserStep": 166,
+      "finalResponseStep": 318,
+      "originalOwners": {
+        "inventory.py": {
+          "dispatch": 74,
+          "write": 15,
+          "handoff": 111,
+          "currentFileAndHandoffConfirmed": true
+        },
+        "sales.py": {
+          "dispatch": 77,
+          "write": 17,
+          "handoff": 127,
+          "currentFileAndHandoffConfirmed": true
+        }
+      },
+      "suiteReruns": {
+        "inventory": {
+          "public3": true,
+          "independent1": true
+        },
+        "sales": {
+          "public3": true,
+          "independent1": true
+        }
+      },
+      "productBytesUnchanged": true,
+      "scopeReviewMessages": [
+        202,
+        290
+      ],
+      "combinedDiffSteps": [
+        207
+      ],
+      "coordinatorCombinedSuiteSteps": [
+        282
+      ],
+      "verifierDeliveryMessages": [
+        290
+      ],
+      "registeredRevision": 2,
+      "contractAndHookAndReviewMatch": false,
+      "finalActualOwners": true,
+      "finalReportsTests": true,
+      "finalReportsBlockers": true,
+      "originalRubric": {
+        "AC-1": true,
+        "AC-2": true,
+        "AC-3": true,
+        "AC-4": false
+      },
+      "originalCriteriaPassed": 3,
+      "nativeSuccess": false,
+      "allRequestedConditionsMet": false
+    },
+    "hookRegression": {
+      "nativeStep": 213,
+      "operation": "read verification state with stderr redirected to /dev/null",
+      "workspaceMutationInPriorHook": true,
+      "workspaceMutationWithFix": false,
+      "effect": "The prior hook treated the corrected contract as late and stopped a complete claim. The native process itself succeeded."
+    },
+    "finalSupervisedContinuation": {
+      "scopeRecheck": true,
+      "previousFinalStep": 318,
+      "originalParentFinalStep": 163,
+      "sameVerifierAsPreviousScope": true,
+      "nativeTransportSuccess": true,
+      "terminalClaimBoundToCurrentResponse": true,
+      "replacementVerifier": {
+        "dispatch": 186,
+        "refusalStep": 183,
+        "reusedActiveVerifier": true,
+        "reason": "native_cross_project_messaging_refusal",
+        "freshScopeAndDeliveryFromSameReplacement": true
+      },
+      "native": {
+        "state": "finished",
+        "nativeStatus": "SUCCESS",
+        "cliExit": 0,
+        "claim": {
+          "passed": 2,
+          "status": "complete",
+          "total": 2
+        },
+        "claimStep": 390,
+        "reason": null
+      },
+      "currentUserStep": 319,
+      "finalResponseStep": 390,
+      "originalOwners": {
+        "inventory.py": {
+          "dispatch": 74,
+          "write": 15,
+          "handoff": 111,
+          "currentFileAndHandoffConfirmed": true
+        },
+        "sales.py": {
+          "dispatch": 77,
+          "write": 17,
+          "handoff": 127,
+          "currentFileAndHandoffConfirmed": true
+        }
+      },
+      "suiteReruns": {
+        "inventory": {
+          "public3": true,
+          "independent1": true
+        },
+        "sales": {
+          "public3": true,
+          "independent1": true
+        }
+      },
+      "productBytesUnchanged": true,
+      "scopeReviewMessages": [
+        332
+      ],
+      "combinedDiffSteps": [
+        364
+      ],
+      "coordinatorCombinedSuiteSteps": [
+        367
+      ],
+      "verifierDeliveryMessages": [
+        382
+      ],
+      "registeredRevision": 3,
+      "contractAndHookAndReviewMatch": true,
+      "finalActualOwners": true,
+      "finalReportsTests": true,
+      "finalReportsBlockers": true,
+      "originalRubric": {
+        "AC-1": true,
+        "AC-2": true,
+        "AC-3": true,
+        "AC-4": true
+      },
+      "originalCriteriaPassed": 4,
+      "nativeSuccess": true,
+      "allRequestedConditionsMet": true
+    }
+  },
+  "releaseQualification": {
+    "basis": "The final native turn of the independently rerun second CSV task",
+    "criteriaPassed": 4,
+    "criteriaTotal": 4,
+    "nativeStatus": "SUCCESS",
+    "cliExit": 0,
+    "finalStep": 390,
+    "configurationPreservedOnReinstall": {
+      "settings": true,
+      "mcp": true,
+      "other_rules": true,
+      "runtime": true,
+      "old_backup": true,
+      "sourceMatches": true,
+      "policyMatches": true
+    },
+    "candidateChecks": {
+      "pythonRun": 420,
+      "pythonSkipped": 3,
+      "nodePassed": 15
+    }
+  }
+}

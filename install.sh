@@ -497,10 +497,10 @@ mkdir -p -- "${policy_dir}"
 # Same-directory temp keeps the final mv an atomic rename on one filesystem.
 policy_temp_path="$(mktemp "${policy_dir}/.auto-harness-policy.XXXXXX")"
 if [[ -f "${policy_target}" ]]; then
-  awk -v start="${policy_start_marker}" -v end="${policy_end_marker}" '
+  if ! awk -v start="${policy_start_marker}" -v end="${policy_end_marker}" '
     { sub(/\r$/, "") }
-    $0 == start { in_managed_block = 1; next }
-    $0 == end { in_managed_block = 0; next }
+    $0 == start { if (in_managed_block) exit 2; in_managed_block = 1; next }
+    $0 == end { if (!in_managed_block) exit 2; in_managed_block = 0; next }
     in_managed_block { next }
     /^[[:space:]]*$/ { pending_blank_lines += 1; next }
     {
@@ -510,7 +510,11 @@ if [[ -f "${policy_target}" ]]; then
       }
       print
     }
-  ' "${policy_target}" > "${policy_temp_path}"
+    END { if (in_managed_block) exit 2 }
+  ' "${policy_target}" > "${policy_temp_path}"; then
+    printf 'Error: malformed harness policy markers; current policy and backup were preserved.\n' >&2
+    exit 1
+  fi
 fi
 
 if [[ -s "${policy_temp_path}" ]]; then
@@ -521,9 +525,10 @@ while IFS= read -r policy_line || [[ -n "${policy_line}" ]]; do
   printf '%s\n' "${policy_line}" >> "${policy_temp_path}"
 done < "${policy_source}"
 printf '%s\n' "${policy_end_marker}" >> "${policy_temp_path}"
-# Keep the FIRST pre-install state as the backup so repeat installs do not
-# overwrite it with an already-managed policy (uninstall.sh restores it).
-if [[ -f "${policy_target}" && ! -f "${policy_target}.bak" ]]; then
+# Keep only a pre-harness recovery copy; a reinstall must not back up our own
+# managed policy. Uninstall removes the managed block from the current file.
+if [[ -f "${policy_target}" && ! -f "${policy_target}.bak" ]] &&
+  ! grep -Fqx -e "${policy_start_marker}" -e "${policy_start_marker}"$'\r' "${policy_target}"; then
   cp -p -- "${policy_target}" "${policy_target}.bak"
 fi
 mv -- "${policy_temp_path}" "${policy_target}"

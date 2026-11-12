@@ -99,16 +99,18 @@ class LifecycleGuardTests(unittest.TestCase):
         hooks = json.loads(HOOKS.read_text(encoding="utf-8"))
         self.assertEqual(
             hooks["security-gate"]["PreToolUse"][0]["matcher"],
-            "write_to_file|replace_file_content|multi_replace_file_content|run_command|call_mcp_tool",
+            "write_file|write_to_file|replace_file_content|multi_replace_file_content|run_command|call_mcp_tool",
         )
         self.assertIn("PreInvocation", hooks["project-context"])
         self.assertEqual(
             hooks["auto-format"]["PostToolUse"][0]["matcher"],
-            "write_to_file|replace_file_content|multi_replace_file_content",
+            "write_file|write_to_file|replace_file_content|multi_replace_file_content",
         )
         self.assertNotIn("SessionStart", json.dumps(hooks))
         self.assertIn("PostToolUse", hooks["verification-gate"])
         self.assertIn("Stop", hooks["verification-gate"])
+        self.assertEqual(hooks["verification-gate"]["PostToolUse"][0]["matcher"],
+                         hooks["security-gate"]["PreToolUse"][0]["matcher"])
 
     def test_safe_write_uses_normal_ask_without_permission_override(self) -> None:
         result = self.security(
@@ -116,6 +118,15 @@ class LifecycleGuardTests(unittest.TestCase):
             {"TargetFile": str(self.workspace / "app.py"), "CodeContent": "print('ok')"},
         )
         self.assert_normal_ask(result)
+
+    def test_native_write_file_scans_actual_content_without_legacy_field_override(self):
+        args = {"Path": str(self.workspace / "app.py"), "Content": "print('ok')", "Overwrite": True}
+        self.assert_normal_ask(self.security("write_file", args))
+        token = "ghp_" + "q" * 36
+        result = self.security("write_file", {**args, "Content": token, "CodeContent": "safe", "IsArtifact": True})
+        self.assertEqual(result["decision"], "deny")
+        self.assertNotIn(token, json.dumps(result))
+        self.assertEqual(self.security("write_file", {"Path": args["Path"]})["decision"], "force_ask")
 
     def test_missing_write_content_forces_review_but_explicit_empty_is_valid(self) -> None:
         cases = (
@@ -653,7 +664,7 @@ class LifecycleGuardTests(unittest.TestCase):
         ])) + "\n", encoding="utf-8")
         if state is not None:
             (artifact / ".codex-claude-harness-verification.json").write_text(
-                json.dumps(state), encoding="utf-8",
+                json.dumps({"commandEvidenceVersion": 2, **state}), encoding="utf-8",
             )
         return {"invocationNum": 1, "transcriptPath": str(transcript)}
 
@@ -671,9 +682,87 @@ class LifecycleGuardTests(unittest.TestCase):
         self.assertIn("read-only work needs no contract", message)
         self.assertNotIn("999", message)
         self.assertNotIn("PRIVATE-REQUEST-CONTENT", message)
-        self.assertNotIn(str(artifact), message)
+        self.assertIn(json.dumps({"artifactDirectoryPath": str(artifact)}, separators=(",", ":")), message)
         self.assertLessEqual(len(message.encode("utf-8")), MODULE.MAX_CONTEXT_BYTES)
         self.assertEqual(before, {path.name: path.read_bytes() for path in artifact.iterdir()})
+
+    def test_context_omits_main_contract_advisory_for_a_worker(self):
+        payload = self.observed_id_fixture()
+        self.assertEqual(self.call("context", {**payload, "parentConversationId": "coordinator"}), {})
+
+    def test_current_main_contract_prompts_disjoint_work_before_product_edits(self):
+        contract = {"version": 2, "userStep": 7, "registeredStep": 8}
+        state = {"taskContract": contract, "acceptanceReviews": {"scope": {"step": 9}}}
+        payload = self.observed_id_fixture(state=state)
+        message = self.call("context", payload)["injectSteps"][0]["ephemeralMessage"]
+        self.assertIn("independent implementation units with disjoint paths", message)
+        self.assertIn("each unassigned unit before waiting", message)
+        self.assertIn("After all handoffs", message)
+        self.assertIn("independent delivery review", message)
+        self.assertIn("owners, checks and blockers", message)
+        self.assertLessEqual(len(message.encode()), MODULE.MAX_CONTEXT_BYTES)
+        self.assertEqual(self.call("context", {**payload, "parentConversationId": "main"}), {})
+
+        for changed in (
+            {"taskContract": {**contract, "firstWriteStep": 10}},
+            {"taskContract": {**contract, "userStep": 1}},
+            {"acceptanceReviews": {"delivery": {"step": 15}}},
+        ):
+            with self.subTest(changed=changed):
+                updated = self.observed_id_fixture(state={**state, **changed})
+                self.assertNotIn("unassigned unit", self.call("context", updated)["injectSteps"][0]["ephemeralMessage"])
+
+    def test_dispatch_context_preserves_both_full_lists_of_max_width_check_ids(self):
+        maximum = 2**63 - 1
+        user = maximum - 20
+        state = {"taskContract": {"version": 2, "userStep": user, "registeredStep": user + 1},
+                 "checkEvents": [{"step": step, "behavioral": step % 2 == 0,
+                                  "success": True, "command": "private"}
+                                 for step in range(maximum - 15, maximum + 1)]}
+        records = [{"source": "USER", "type": "REQUEST", "step_index": user, "content": "request"}]
+        payload = self.observed_id_fixture(records=records, state=state)
+        message = self.call("context", payload)["injectSteps"][0]["ephemeralMessage"]
+        self.assertLessEqual(len(message.encode()), MODULE.MAX_CONTEXT_BYTES)
+        self.assertIn("each unassigned unit before waiting", message)
+        for event in state["checkEvents"]:
+            self.assertIn(str(event["step"]), message)
+
+    def test_context_keeps_observed_ids_when_artifact_location_exceeds_hint_budget(self):
+        artifact = self.base
+        for index in range(3):
+            artifact = artifact / (str(index) + "a" * 199)
+        artifact.mkdir(parents=True)
+        transcript = artifact / "transcript_full.jsonl"
+        transcript.write_text(json.dumps({"source": "USER", "type": "REQUEST", "step_index": 7,
+                                          "content": "Synthetic task"}) + "\n", encoding="utf-8")
+        result = self.call("context", {"invocationNum": 1, "artifactDirectoryPath": str(artifact),
+                                       "transcriptPath": str(transcript)})
+        message = result["injectSteps"][0]["ephemeralMessage"]
+        self.assertIn("current user step=7", message)
+        self.assertLessEqual(len(message.encode("utf-8")), MODULE.MAX_CONTEXT_BYTES)
+        self.assertNotIn(str(artifact), message)
+
+    def test_context_supports_native_full_transcript_without_broadening_path_guards(self):
+        payload = self.observed_id_fixture(records=[
+            {"source": "USER_EXPLICIT", "type": "USER_INPUT", "step_index": 7,
+             "content": "Synthetic current task"},
+        ])
+        original = Path(payload["transcriptPath"])
+        full = original.with_name("transcript_full.jsonl")
+        original.rename(full)
+        payload["transcriptPath"] = str(full)
+        message = self.call("context", payload)["injectSteps"][0]["ephemeralMessage"]
+        self.assertIn("current user step=7", message)
+        for rejected in (self.base / full.name, full.with_name("transcript_other.jsonl")):
+            rejected.write_bytes(full.read_bytes())
+            self.assertEqual(self.call("context", {**payload, "transcriptPath": str(rejected)}), {})
+        actual = full.with_name("saved.jsonl")
+        full.rename(actual)
+        try:
+            full.symlink_to(actual)
+        except OSError:
+            return
+        self.assertEqual(self.call("context", payload), {})
 
     def test_context_candidates_share_stop_freshness_and_failure_filter(self):
         state = {"taskContract": {"userStep": 7, "registeredStep": 8},
@@ -773,6 +862,26 @@ class LifecycleGuardTests(unittest.TestCase):
             for step in range(8, 521):
                 handle.write(json.dumps({"source": "MODEL", "type": "TOOL_CALL",
                                          "step_index": step, "content": "PRIVATE"}) + "\n")
+        self.assertEqual(self.call("context", payload), {})
+
+    def test_context_retains_user_after_multibyte_tail_cutoff_but_rejects_malformed_end(self):
+        payload = self.observed_id_fixture()
+        transcript = Path(payload["transcriptPath"])
+        older = {"source": "MODEL", "type": "TOOL_CALL", "step_index": 8,
+                 "content": "\u00e9" * 300000}
+        current = {"source": "USER", "type": "REQUEST", "step_index": 9,
+                   "content": "Synthetic latest task"}
+        data = (json.dumps(older, ensure_ascii=False) + "\n" + json.dumps(current) + "\n").encode("utf-8")
+        tail_limit = 512 * 1024
+        self.assertGreater(len(data), tail_limit)
+        if data[-tail_limit] & 0xC0 != 0x80:
+            data += b"\n"
+        self.assertEqual(data[-tail_limit] & 0xC0, 0x80)
+        transcript.write_bytes(data)
+        message = self.call("context", payload)["injectSteps"][0]["ephemeralMessage"]
+        self.assertIn("current user step=9", message)
+        self.assertNotIn("Synthetic latest task", message)
+        transcript.write_bytes(data + b'{"source":"MODEL"')
         self.assertEqual(self.call("context", payload), {})
 
     def test_context_ignores_raw_package_descriptions_and_scripts(self) -> None:
@@ -1081,6 +1190,18 @@ class LifecycleGuardTests(unittest.TestCase):
             json.loads(record.read_text(encoding="utf-8")),
             ["--write", str(target.resolve())],
         )
+
+    def test_native_write_file_formats_actual_path_only(self):
+        self._fake_prettier()
+        target = self.workspace / "native.js"
+        target.write_text("const x=1", encoding="utf-8")
+        record = self.base / "native-format.json"
+        payload = {"toolCall": {"name": "write_file", "args": {
+            "Path": str(target), "Content": "const x=1", "Overwrite": True,
+            "TargetFile": str(self.base / "decoy.js"),
+        }}}
+        self.call("format", payload, {"FORMAT_RECORD": str(record), "HARNESS_AUTO_FORMAT": "1"})
+        self.assertEqual(json.loads(record.read_text()), ["--write", str(target.resolve())])
 
     def test_autoformat_rejects_file_outside_workspace(self) -> None:
         self._fake_prettier()

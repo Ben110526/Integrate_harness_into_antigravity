@@ -1,0 +1,437 @@
+{
+  "experiment": "Automatic independent implementation and post-handoff delivery review",
+  "date": "2026-11-12",
+  "client": "Antigravity CLI 1.5.6",
+  "baseline_commit": "7e62aa6380f7615814c27afd4136a526cc220a40",
+  "baseline_tests": {
+    "public_errors": 6,
+    "held_out_errors": 2
+  },
+  "source_suite": {
+    "python_run": 460,
+    "python_skipped": 3,
+    "node_profile_tests_passed": 15
+  },
+  "install": {
+    "preserved": {
+      "settings": true,
+      "mcp": true,
+      "runtime": true,
+      "other_rules": true,
+      "old_backup": true
+    },
+    "plugin_matches": true,
+    "policy_matches": true
+  },
+  "comparison_before_patch": {
+    "report": "2026-11-12-csv-neutral-prompt.json",
+    "original_rubric_passed": 2,
+    "implementation_workers": 0
+  },
+  "runs": [
+    {
+      "entry": {
+        "prompt": "Implement the two CSV reports described in README.md.",
+        "user_messages": 1,
+        "route": "IMPLEMENT",
+        "elapsed_seconds": 524.9
+      },
+      "runtime": {
+        "native_status": "ERROR",
+        "error_class": "timeout",
+        "cli_exit": 0,
+        "observer_deadline": false,
+        "final_claim": {
+          "counts": {
+            "passed": 2
+          },
+          "status": "complete"
+        },
+        "observed_error": "A TCP read timed out at coordinator step 15. The same conversation later produced the final answer and completed the reviews."
+      },
+      "native_requirements": [
+        {
+          "id": "AC-1",
+          "status": "passed",
+          "cited_steps": [
+            56
+          ],
+          "native_exit_and_hook_confirmed": true,
+          "delivery_agrees": true
+        },
+        {
+          "id": "AC-2",
+          "status": "passed",
+          "cited_steps": [
+            56
+          ],
+          "native_exit_and_hook_confirmed": true,
+          "delivery_agrees": true
+        }
+      ],
+      "scope_review_step": 36,
+      "delivery_review_step": 69,
+      "original_four_criteria": {
+        "AC-1": {
+          "description": "Inventory report meets the CSV specification",
+          "passed": true,
+          "checks": {
+            "public": {
+              "exit": 0,
+              "tests": 3,
+              "ok": true
+            },
+            "external": {
+              "exit": 0,
+              "tests": 1,
+              "ok": true
+            }
+          }
+        },
+        "AC-2": {
+          "description": "Sales report meets the CSV specification",
+          "passed": true,
+          "checks": {
+            "public": {
+              "exit": 0,
+              "tests": 3,
+              "ok": true
+            },
+            "external": {
+              "exit": 0,
+              "tests": 1,
+              "ok": true
+            }
+          }
+        },
+        "AC-3": {
+          "description": "Two distinct implementation workers, one owner per file, actual handoffs and combined diff, with original tests and other files intact",
+          "passed": true
+        },
+        "AC-4": {
+          "description": "Coordinator runs combined suite after both handoffs, obtains independent delivery and reports owners, test result and blockers",
+          "passed": true
+        }
+      },
+      "old_rubric_passed": 4,
+      "implementation_owners": [
+        {
+          "dispatch_step": 39,
+          "files": [
+            "inventory.py"
+          ],
+          "write_receipts": [
+            {
+              "step": 13,
+              "file": "inventory.py",
+              "tool": "edit_file"
+            }
+          ],
+          "handoff_step": 47
+        },
+        {
+          "dispatch_step": 42,
+          "files": [
+            "sales.py"
+          ],
+          "write_receipts": [
+            {
+              "step": 25,
+              "file": "sales.py",
+              "tool": "edit_file"
+            }
+          ],
+          "handoff_step": 51
+        }
+      ],
+      "coordinator_product_writes": [],
+      "dispatches_before_first_handoff": true,
+      "combined_diff": [
+        {
+          "step": 53,
+          "type": "git diff",
+          "exit": 0,
+          "tests": null,
+          "ok": null,
+          "diff_headers": [
+            "inventory.py",
+            "sales.py"
+          ]
+        }
+      ],
+      "coordinator_final_suites": [
+        56
+      ],
+      "verifier": [
+        {
+          "dispatch_step": 29,
+          "inspections_and_checks": [
+            {
+              "step": 15,
+              "type": "exact full suite",
+              "exit": 1,
+              "tests": 6,
+              "ok": false,
+              "diff_headers": []
+            },
+            {
+              "step": 26,
+              "type": "git status",
+              "exit": 0,
+              "tests": null,
+              "ok": null,
+              "diff_headers": []
+            },
+            {
+              "step": 28,
+              "type": "git diff",
+              "exit": 0,
+              "tests": null,
+              "ok": null,
+              "diff_headers": [
+                "inventory.py",
+                "sales.py"
+              ]
+            },
+            {
+              "step": 30,
+              "type": "exact full suite",
+              "exit": 0,
+              "tests": 6,
+              "ok": true,
+              "diff_headers": []
+            }
+          ]
+        }
+      ],
+      "verifier_delivery": [
+        67
+      ],
+      "final_owner_attribution": [
+        {
+          "files": [
+            "inventory.py"
+          ],
+          "worker_dispatched_at": [
+            39
+          ],
+          "matches_verified_author": true
+        },
+        {
+          "files": [
+            "sales.py"
+          ],
+          "worker_dispatched_at": [
+            42
+          ],
+          "matches_verified_author": true
+        }
+      ],
+      "final_reports_blockers": true,
+      "public_rerun": {
+        "exit": 0,
+        "tests": 6,
+        "ok": true
+      },
+      "external_rerun": {
+        "exit": 0,
+        "tests": 2,
+        "ok": true
+      },
+      "hook_checks": [
+        {
+          "step": 23,
+          "hook_success": false,
+          "behavioral": true,
+          "native_exit": 1,
+          "coverage": "unittest"
+        },
+        {
+          "step": 56,
+          "hook_success": true,
+          "behavioral": true,
+          "native_exit": 0,
+          "coverage": "unittest"
+        }
+      ],
+      "pending_at_exit": 0,
+      "unresolved_failures_at_exit": 0,
+      "changed_files": [
+        "inventory.py",
+        "sales.py"
+      ],
+      "other_changed_file_count": 0,
+      "git_diff_check_exit": 2,
+      "diff_check_notes": [
+        "One trailing blank line at EOF in inventory.py and sales.py."
+      ]
+    },
+    {
+      "entry": {
+        "prompt": "Implement the two CSV reports described in README.md.",
+        "user_messages": 1,
+        "route": null,
+        "elapsed_seconds": 1804.4
+      },
+      "runtime": {
+        "native_status": "ERROR",
+        "error_class": null,
+        "cli_exit": 3,
+        "observer_deadline": false,
+        "final_claim": null,
+        "diagnostic": "quota",
+        "observed_error": "Step 49 reports RESOURCE_EXHAUSTED (429): individual quota reached for the sales worker. The coordinator did not receive its handoff or finish the delivery review."
+      },
+      "native_requirements": [
+        {
+          "id": "AC-1",
+          "status": null,
+          "cited_steps": [],
+          "native_exit_and_hook_confirmed": false,
+          "delivery_agrees": false
+        },
+        {
+          "id": "AC-2",
+          "status": null,
+          "cited_steps": [],
+          "native_exit_and_hook_confirmed": false,
+          "delivery_agrees": false
+        }
+      ],
+      "scope_review_step": 38,
+      "delivery_review_step": null,
+      "original_four_criteria": {
+        "AC-1": {
+          "description": "Inventory report meets the CSV specification",
+          "passed": true,
+          "checks": {
+            "public": {
+              "exit": 0,
+              "tests": 3,
+              "ok": true
+            },
+            "external": {
+              "exit": 0,
+              "tests": 1,
+              "ok": true
+            }
+          }
+        },
+        "AC-2": {
+          "description": "Sales report meets the CSV specification",
+          "passed": true,
+          "checks": {
+            "public": {
+              "exit": 0,
+              "tests": 3,
+              "ok": true
+            },
+            "external": {
+              "exit": 0,
+              "tests": 1,
+              "ok": true
+            }
+          }
+        },
+        "AC-3": {
+          "description": "Two distinct implementation workers, one owner per file, actual handoffs and combined diff, with original tests and other files intact",
+          "passed": false,
+          "missing": "Sales handoff and coordinator inspection of the combined diff."
+        },
+        "AC-4": {
+          "description": "Coordinator runs combined suite after both handoffs, obtains independent delivery and reports owners, test result and blockers",
+          "passed": false,
+          "missing": "Coordinator test after both handoffs, independent delivery and final ownership report."
+        }
+      },
+      "old_rubric_passed": 2,
+      "implementation_owners": [
+        {
+          "dispatch_step": 41,
+          "files": [
+            "inventory.py"
+          ],
+          "write_receipts": [
+            {
+              "step": 9,
+              "file": "inventory.py",
+              "tool": "write_file"
+            }
+          ],
+          "handoff_step": 53
+        },
+        {
+          "dispatch_step": 44,
+          "files": [
+            "sales.py"
+          ],
+          "write_receipts": [
+            {
+              "step": 15,
+              "file": "sales.py",
+              "tool": "edit_file"
+            }
+          ],
+          "handoff_step": null
+        }
+      ],
+      "coordinator_product_writes": [],
+      "dispatches_before_first_handoff": true,
+      "combined_diff": [],
+      "coordinator_final_suites": [],
+      "verifier": [
+        {
+          "dispatch_step": 31,
+          "inspections_and_checks": [
+            {
+              "step": 5,
+              "type": "git status",
+              "exit": 0,
+              "tests": null,
+              "ok": null,
+              "diff_headers": []
+            },
+            {
+              "step": 15,
+              "type": "exact full suite",
+              "exit": 1,
+              "tests": 6,
+              "ok": false,
+              "diff_headers": []
+            }
+          ]
+        }
+      ],
+      "verifier_delivery": [],
+      "final_owner_attribution": [],
+      "final_reports_blockers": false,
+      "public_rerun": {
+        "exit": 0,
+        "tests": 6,
+        "ok": true
+      },
+      "external_rerun": {
+        "exit": 0,
+        "tests": 2,
+        "ok": true
+      },
+      "hook_checks": [
+        {
+          "step": 25,
+          "hook_success": false,
+          "behavioral": true,
+          "native_exit": 1,
+          "coverage": "unittest"
+        }
+      ],
+      "pending_at_exit": 0,
+      "unresolved_failures_at_exit": 1,
+      "changed_files": [
+        "inventory.py",
+        "sales.py"
+      ],
+      "other_changed_file_count": 0,
+      "git_diff_check_exit": 0
+    }
+  ]
+}

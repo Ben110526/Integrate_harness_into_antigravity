@@ -21,6 +21,7 @@ import sys
 import tempfile
 import time
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterator, Optional
 from urllib.parse import unquote, urlparse
 
@@ -51,11 +52,15 @@ MUTATION = "mutation"
 NEUTRAL = "neutral"
 WAIVER = "waiver"
 FAILURE = "failure"
+UNVERIFIED = "unverified-command"
+COMMAND_EVIDENCE_VERSION = 2
 TASK_CONTRACT_FILE = "harness-task-contract.json"
 ACCEPTANCE_REVIEW_FILE = "harness-acceptance-review.json"
+PROTOCOL_ARTIFACT_FILES = {TASK_CONTRACT_FILE, ACCEPTANCE_REVIEW_FILE, "harness-lesson.json"}
 RESULT_MARKER = "HARNESS_RESULT:"
 MAX_REQUIREMENTS = 64
 MAX_CHECK_EVENTS = 128
+MAX_CHECKPOINT_WORKERS = 32
 
 _SCRIPT_EVIDENCE_NAME = re.compile(
     r"(?:^|[-_.])(?:test|tests|check|lint|verify|validate|doctor|build)(?:[-_.]|$)",
@@ -372,6 +377,11 @@ def _tool_call(payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         return "", {}
     name = tool_call.get("name")
     args = tool_call.get("args")
+    if name == "write_file" and isinstance(args, dict):
+        normalized = {"TargetFile": args.get("Path"), "CodeContent": args.get("Content")}
+        if _native_protocol_target(args.get("Path"), payload):
+            normalized["IsArtifact"] = True
+        return "write_to_file", normalized
     return (
         name if isinstance(name, str) else "",
         args if isinstance(args, dict) else {},
@@ -419,7 +429,7 @@ def _safe_transcript_path(payload: dict[str, Any]) -> Optional[Path]:
     artifact = Path(artifact_value).expanduser()
     if not transcript.is_absolute() or not artifact.is_absolute():
         return None
-    if transcript.name != "transcript.jsonl":
+    if transcript.name not in {"transcript.jsonl", "transcript_full.jsonl"}:
         return None
     if not _lexically_within(transcript, artifact):
         return None
@@ -445,6 +455,10 @@ def _read_transcript_tail(payload: dict[str, Any]) -> Optional[list[str]]:
             data = handle.read(size - start)
     except OSError:
         return None
+    if start > 0:
+        # The byte cutoff can split a UTF-8 character in an incomplete JSONL
+        # record. Drop that record before decoding the retained complete lines.
+        data = data.partition(b"\n")[2]
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
@@ -453,8 +467,6 @@ def _read_transcript_tail(payload: dict[str, Any]) -> Optional[list[str]]:
         line[:-1] if line.endswith("\r") else line
         for line in text.split("\n")
     ]
-    if start > 0 and lines:
-        lines = lines[1:]
     return lines[-MAX_TRANSCRIPT_LINES:]
 
 
@@ -507,6 +519,65 @@ def _latest_user_request(
             return None
         return content, step
     return None
+
+
+_CLI_TIMESTAMP = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})"
+_COMMAND_EXIT_HEADER = re.compile(
+    rf"\A(?:Created At: {_CLI_TIMESTAMP}\r?\nCompleted At: {_CLI_TIMESTAMP}\r?\n){{1,2}}"
+    r"Command exited with code (-?[0-9]{1,10})\.(?=\r?\n|\Z)"
+)
+
+
+def _callback_status(payload: dict[str, Any]) -> str:
+    if "error" not in payload:
+        return "absent"
+    if not isinstance(payload["error"], str):
+        return "invalid"
+    return "error" if payload["error"] else "ok"
+
+
+def _command_result(records: Optional[list[dict[str, Any]]], step: int, callback: str,
+                    *, deferred: bool = False) -> str:
+    if records is None or callback == "invalid":
+        return UNVERIFIED
+    matches = [record for record in records
+               if type(record.get("step_index")) is int and record["step_index"] == step]
+    if not matches:
+        return "pending"
+    if len(matches) != 1:
+        return UNVERIFIED
+    record = matches[0]
+    content = record.get("content")
+    if (record.get("source") != "MODEL" or record.get("type") != "GENERIC"
+            or record.get("status") != "DONE" or not isinstance(content, str)
+            or _content_was_truncated(record)):
+        return UNVERIFIED
+    if "created_at" in record or content.lstrip().startswith("Created At:"):
+        # The runtime owns this prefix. Everything after "Command output:" is stdout.
+        match = _COMMAND_EXIT_HEADER.match(content)
+        if not match:
+            return UNVERIFIED
+        return FAILURE if int(match[1]) != 0 or callback == "error" or record.get("error") else EVIDENCE
+    # Older synchronous callbacks supply an explicit tool result status.
+    if deferred or callback == "absent":
+        return UNVERIFIED
+    return FAILURE if callback == "error" or record.get("error") else EVIDENCE
+
+
+def _discard_legacy_command_evidence(state: dict[str, Any]) -> bool:
+    if state.get("commandEvidenceVersion") == COMMAND_EVIDENCE_VERSION:
+        return False
+    changed = False
+    # Earlier versions could mark RUNNING results as successful. Preserve task,
+    # write and unresolved-failure history, but never reuse their check evidence.
+    for key in ("checkEvents", "pendingCommands", "lastEvidenceStep", "lastBehavioralEvidenceStep",
+                "lastWaiverStep", "verifiedMutationStep", "evidence", "waiverReason"):
+        if key in state:
+            state.pop(key)
+            changed = True
+    if changed:
+        state["commandEvidenceVersion"] = COMMAND_EVIDENCE_VERSION
+    return changed
 
 
 def _latest_model_response(
@@ -1325,11 +1396,15 @@ def _is_print_waiver(values: list[str]) -> bool:
     )
 
 
-def _has_output_redirection(values: list[str]) -> bool:
-    return any(
-        ">" in value and set(value) <= {"<", ">", "&"}
-        for value in values
-    )
+def _has_output_redirection(values: list[str], *, include_null_device: bool = False) -> bool:
+    for index, value in enumerate(values):
+        if ">" not in value or not set(value) <= {"<", ">", "&", "|"}:
+            continue
+        if (not include_null_device and os.name == "posix" and value in {">", ">>"}
+                and values[index + 1:index + 2] == ["/dev/null"]):
+            continue
+        return True
+    return False
 
 
 def _classify_segment(values: list[str], depth: int = 0) -> tuple[str, bool]:
@@ -1376,10 +1451,16 @@ def _classify_segment(values: list[str], depth: int = 0) -> tuple[str, bool]:
 
 def _classify_command(command: str, depth: int = 0) -> tuple[str, str, bool]:
     segments, unsafe = _tokens(command)
+    if command.strip() and not segments:
+        # Unsupported quoting must not preserve evidence from before a command
+        # whose writes the parser cannot determine.
+        return MUTATION, "", True
     waiver = _waiver_reason(command)
     if waiver and not unsafe and len(segments) == 1 and _is_print_waiver(segments[0]):
         if _has_output_redirection(segments[0]):
             return MUTATION, "", True
+        if _has_output_redirection(segments[0], include_null_device=True):
+            return NEUTRAL, "", False
         return WAIVER, waiver, False
 
     kinds: list[str] = []
@@ -1643,6 +1724,26 @@ def _event(name: str, args: dict[str, Any], payload: dict[str, Any]) -> dict[str
     return {}
 
 
+def _native_protocol_target(target: Any, payload: dict[str, Any]) -> bool:
+    """Recognize native protocol writes only at the callback's artifact root."""
+    directory = payload.get("artifactDirectoryPath")
+    if not isinstance(target, str) or not isinstance(directory, str):
+        return False
+    candidate, artifact = Path(target), Path(directory)
+    if (not candidate.is_absolute() or not artifact.is_absolute()
+            or candidate.name not in PROTOCOL_ARTIFACT_FILES or candidate.parent != artifact
+            or ".." in candidate.parts or ".." in artifact.parts):
+        return False
+    try:
+        if artifact.is_symlink() or not artifact.is_dir() or candidate.is_symlink():
+            return False
+        info = candidate.lstat()
+        return (stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+                and _lexically_within(candidate, artifact) and _is_within(candidate, artifact))
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
 def _artifact_json(args: dict[str, Any], payload: dict[str, Any], filename: str) -> Optional[dict[str, Any]]:
     target, directory = args.get("TargetFile"), payload.get("artifactDirectoryPath")
     if not isinstance(target, str) or not isinstance(directory, str):
@@ -1762,16 +1863,19 @@ def _register_multiturn_contract(
     late = any(user_step < write < step for write in state.get("writeSteps", []))
     origin = previous.get("originStep", previous.get("userStep")) if continuing else min(row["sourceStep"] for row in rows)
     if not continuing:
+        state.pop("workerCheckpoint", None)
         # Explicit replacement ends the old task's verification debt, not its files.
         for key in ("lastWriteStep", "lastBehavioralWriteStep", "lastEvidenceStep",
                     "lastBehavioralEvidenceStep", "lastWaiverStep", "verifiedMutationStep",
-                    "failureOverflowStep"):
+                    "failureOverflowStep", "unverifiedCheckStep"):
             if state.get(key, origin) <= origin:
                 state.pop(key, None)
         state["writeSteps"] = [write for write in state.get("writeSteps", []) if write > origin]
         state["checkEvents"] = [check for check in state.get("checkEvents", []) if check["step"] > origin]
         state.pop("modifiedPaths", None)
         state["gateRetries"] = 0
+    else:
+        _capture_worker_checkpoint(state, records, continuing_at=step)
     state["taskContract"] = {
         "version": 2, "taskId": task_id, "revision": revision, "userStep": user_step,
         "originStep": origin, "registeredStep": step, "requirements": rows, "late": late,
@@ -1929,20 +2033,24 @@ def _register_contract(
 
 
 def _record_check(
-    state: dict[str, Any], event: dict[str, Any], args: dict[str, Any], step: int
+    state: dict[str, Any], event: dict[str, Any], fingerprint: str, step: int
 ) -> bool:
     contract = state.get("taskContract", {})
     if contract.get("version") == 2 and step <= contract["originStep"]:
         return False
-    if event.get("kind") not in {EVIDENCE, FAILURE} and not event.get("failedCheck") and not event.get("containsCheck"):
+    if (event.get("kind") not in {EVIDENCE, FAILURE} and not event.get("failedCheck")
+            and not event.get("containsCheck") and not event.get("unresolvedToolFailure")):
         return False
-    fingerprint = hashlib.sha256(
-        (_command(args) + "\0" + str(args.get("Cwd", ""))).encode("utf-8", "replace")
-    ).hexdigest()
     checks = state.get("checkEvents", [])
+    if event.get("kind") == UNVERIFIED:
+        # A tool error is unresolved debt, but cannot teach a failed execution
+        # when the process's terminal state was never observed.
+        return _record_failure_debt(state, fingerprint, step, checks)
     checks = [item for item in checks if isinstance(item, dict) and item.get("step") != step]
     success = (event["kind"] != FAILURE and not event.get("failedCheck")
                and (event["kind"] == EVIDENCE or event.get("containsCheck") is True))
+    if success and step <= state.get("unverifiedCheckStep", -1):
+        return False
     checks.append({"step": step, "success": success,
                    "behavioral": event.get("behavioral") is True, "command": fingerprint})
     state["checkEvents"] = sorted(checks, key=lambda item: item["step"])[-MAX_CHECK_EVENTS:]
@@ -1951,11 +2059,22 @@ def _record_check(
     if success:
         if failures.get(fingerprint, step) < step:
             failures.pop(fingerprint, None)
-    elif not any(item["command"] == fingerprint and item["success"] and item["step"] > step for item in checks):
-        if fingerprint in failures or len(failures) < MAX_CHECK_EVENTS:
-            failures[fingerprint] = max(step, failures.get(fingerprint, -1))
-        else:
-            state["failureOverflowStep"] = max(step, state.get("failureOverflowStep", -1))
+    else:
+        _record_failure_debt(state, fingerprint, step, checks)
+        failures = state.get("failedChecks", {})
+    state["failedChecks"] = failures
+    state["commandEvidenceVersion"] = COMMAND_EVIDENCE_VERSION
+    return True
+
+
+def _record_failure_debt(state: dict[str, Any], fingerprint: str, step: int, checks: list[dict[str, Any]]) -> bool:
+    if any(item["command"] == fingerprint and item["success"] and item["step"] > step for item in checks):
+        return False
+    failures = state.get("failedChecks", {})
+    if fingerprint in failures or len(failures) < MAX_CHECK_EVENTS:
+        failures[fingerprint] = max(step, failures.get(fingerprint, -1))
+    else:
+        state["failureOverflowStep"] = max(step, state.get("failureOverflowStep", -1))
     state["failedChecks"] = failures
     return True
 
@@ -1966,8 +2085,10 @@ def _completion_candidate_steps(
     """Share the Stop candidate filter with the read-only invocation advisory."""
     contract = state.get("taskContract", {})
     contract = contract if isinstance(contract, dict) else {}
+    pending_floor = max((item["step"] for item in state.get("pendingCommands", [])), default=-1)
     floor = max(value for value in (
-        user_step, contract.get("registeredStep", -1), state.get("lastWriteStep", -1)
+        user_step, contract.get("registeredStep", -1), state.get("lastWriteStep", -1),
+        state.get("unverifiedCheckStep", -1), pending_floor
     ) if type(value) is int)
     raw_checks = state.get("checkEvents", [])
     checks = [item for item in raw_checks if isinstance(item, dict)
@@ -1976,7 +2097,7 @@ def _completion_candidate_steps(
     candidates: dict[str, list[int]] = {"behavioral": [], "static": []}
     for check in checks:
         step = check["step"]
-        ordered_chain = (step == state.get("lastWriteStep") == state.get("verifiedMutationStep")
+        ordered_chain = (step > pending_floor and step == state.get("lastWriteStep") == state.get("verifiedMutationStep")
                          and step > max(user_step, contract.get("registeredStep", -1)))
         later_failure = any(
             other["command"] == check["command"] and not other["success"]
@@ -1988,10 +2109,181 @@ def _completion_candidate_steps(
     return floor, {kind: steps[-8:] for kind, steps in candidates.items()}
 
 
+def _is_leaf_assignment(payload: dict[str, Any]) -> bool:
+    parent = payload.get("parentConversationId")
+    current = payload.get("conversationId")
+    if not isinstance(parent, str) or not isinstance(current, str):
+        return False
+    return bool(parent.strip() and current.strip()) and parent.strip() != current.strip()
+
+
+_WORKER_ID = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+_DISPATCH_RECEIPT = re.compile(
+    rf"\A(?:Created At: {_CLI_TIMESTAMP}\r?\nCompleted At: {_CLI_TIMESTAMP}\r?\n){{1,2}}"
+    r"Created the following subagent:\s*"
+)
+_SYSTEM_PACKET = re.compile(
+    rf"\A[^<\n]*<SYSTEM_MESSAGE>[^\n]*\r?\n\s*<SYSTEM_MESSAGE>\r?\n"
+    rf"\[Message\] timestamp=({_CLI_TIMESTAMP}) sender=(system|{_WORKER_ID}) "
+    r"priority=[A-Z_]+ content="
+)
+_INTERRUPTED_WORKER = re.compile(
+    rf'The subagent [^\r\n]{{1,256}} with id "({_WORKER_ID})" encountered an error '
+    r'and has either stopped or failed to start execution:\s*'
+)
+
+
+def _native_worker_message(row: dict[str, Any]) -> tuple[str, str, str]:
+    if ((row.get("source"), row.get("type"), row.get("status")) != ("SYSTEM", "SYSTEM_MESSAGE", "DONE")
+            or _content_was_truncated(row) or not isinstance(row.get("content"), str)):
+        return "", "", ""
+    content = row["content"]
+    envelope = _SYSTEM_PACKET.match(content)
+    return (envelope[2], content[envelope.end():], envelope[1]) if envelope else ("", "", "")
+
+
+def _reported_reset(reason: str, timestamp: str) -> Optional[str]:
+    # The CLI can supply "Resets in 167h6m34s." directly in its quota diagnostic.
+    reset = re.search(r"\bresets in (?=\d)(?:(\d{1,5})d)?(?:(\d{1,5})h)?(?:(\d{1,5})m)?(?:(\d{1,5})s)?\.(?:\s|$)", reason)
+    if not reset:
+        return None
+    try:
+        days, hours, minutes, seconds = [int(value or 0) for value in reset.groups()]
+        when = datetime.fromisoformat(timestamp.replace("Z", "+00:00")) + timedelta(
+            days=days, hours=hours, minutes=minutes, seconds=seconds)
+        return when.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    except (ValueError, OverflowError):
+        return None
+
+
+def _dispatched_worker(row: dict[str, Any], previous: dict[str, Any]) -> Optional[str]:
+    calls = previous.get("tool_calls")
+    if ((row.get("source"), row.get("type"), row.get("status")) != ("MODEL", "GENERIC", "DONE")
+            or (previous.get("source"), previous.get("type"), previous.get("status")) != ("MODEL", "PLANNER_RESPONSE", "DONE")
+            or previous.get("step_index") != row["step_index"] - 1 or row.get("error")
+            or not isinstance(calls, list) or len(calls) != 1 or not isinstance(calls[0], dict)
+            or calls[0].get("name") != "invoke_subagent" or _content_was_truncated(row)):
+        return None
+    content = row.get("content")
+    header = _DISPATCH_RECEIPT.match(content) if isinstance(content, str) else None
+    if header:
+        try:
+            receipt, _ = json.JSONDecoder().raw_decode(content, header.end())
+        except ValueError:
+            return None
+        worker = receipt.get("conversationId") if isinstance(receipt, dict) else None
+        if isinstance(worker, str) and re.fullmatch(_WORKER_ID, worker):
+            return worker
+    return None
+
+
+def _valid_worker_checkpoint(checkpoint: Any) -> bool:
+    if not isinstance(checkpoint, dict) or len(checkpoint) > MAX_CHECKPOINT_WORKERS:
+        return False
+    for worker, row in checkpoint.items():
+        if not isinstance(worker, str) or not re.fullmatch(_WORKER_ID, worker) or not isinstance(row, dict):
+            return False
+        dispatch = row.get("dispatchStep")
+        if type(dispatch) is not int or not 0 <= dispatch <= 2**63 - 1:
+            return False
+        for key in ("messageStep", "interruptionStep"):
+            if key in row and (type(row[key]) is not int or not dispatch < row[key] <= 2**63 - 1):
+                return False
+        if ("interruptionStep" in row) != (row.get("reason") in ("quota", "timeout")):
+            return False
+    return True
+
+
+def _capture_worker_checkpoint(state: dict[str, Any], records: list[dict[str, Any]],
+                               *, continuing_at: Optional[int] = None) -> bool:
+    """Keep native dispatch/message pointers only. A received message is not proof of handoff."""
+    contract = state.get("taskContract")
+    previous_checkpoint = state.get("workerCheckpoint", {})
+    if (not isinstance(contract, dict) or contract.get("version") != 2
+            or type(contract.get("registeredStep")) is not int or not _valid_worker_checkpoint(previous_checkpoint)):
+        return False
+    workers = {key: dict(value) for key, value in previous_checkpoint.items()}
+    prior: dict[str, Any] = {}
+    registered_turn = False
+    before_next_request = True
+    for row in records:
+        step = row.get("step_index")
+        if type(step) is not int or not 0 <= step <= 2**63 - 1 or step <= prior.get("step_index", -1):
+            return False
+        is_request = row.get("source") in {"USER", "USER_EXPLICIT"} and row.get("type") in {"REQUEST", "USER_INPUT"}
+        if step == contract.get("userStep") and is_request:
+            registered_turn = True
+        if registered_turn and step > contract["registeredStep"]:
+            if is_request:
+                if continuing_at is None:
+                    break  # A new request has not yet confirmed it is continuing this task.
+                before_next_request = False
+            if continuing_at is not None and step >= continuing_at:
+                break
+            # A previously assigned worker may hand off while the coordinator is
+            # registering the next revision. Only the confirmed continuation adopts that reply.
+            worker = _dispatched_worker(row, prior) if before_next_request else None
+            if worker and worker not in workers and len(workers) < MAX_CHECKPOINT_WORKERS:
+                workers[worker] = {"dispatchStep": step}
+            sender, body, timestamp = _native_worker_message(row)
+            if sender in workers and step > workers[sender].get("messageStep", workers[sender]["dispatchStep"]):
+                workers[sender]["messageStep"] = step
+            if sender == "system":
+                interrupted = _INTERRUPTED_WORKER.match(body)
+                if interrupted and interrupted[1] in workers:
+                    reason = body[interrupted.end():].partition("\n")[0][:1024].casefold()
+                    kind = ("quota" if re.search(r"\b(?:resource_exhausted|429)\b", reason)
+                            else "timeout" if re.search(r"\b(?:deadline_exceeded|timed out|timeout)\b", reason) else None)
+                    entry = workers[interrupted[1]]
+                    if kind and step > entry.get("interruptionStep", entry["dispatchStep"]):
+                        entry.update(interruptionStep=step, reason=kind)
+                        entry.pop("reportedResetAt", None)
+                        reset = _reported_reset(reason, timestamp) if kind == "quota" else None
+                        if reset:
+                            entry["reportedResetAt"] = reset
+        prior = row
+    if workers == previous_checkpoint:
+        return False
+    state["workerCheckpoint"] = workers
+    return True
+
+
+def _refresh_progress(payload: dict[str, Any], records: list[dict[str, Any]],
+                      path: Path, state: dict[str, Any], *, reconcile: bool = True) -> dict[str, Any]:
+    main = not _is_leaf_assignment(payload)
+    if not (reconcile and state.get("pendingCommands")) and not (main and _capture_worker_checkpoint(dict(state), records)):
+        return state
+    with _state_lock(path, blocking=False) as acquired:
+        if acquired:
+            state = _load_state(path, max_bytes=MAX_TRANSCRIPT_TAIL_BYTES)
+            changed = main and _capture_worker_checkpoint(state, records)
+            if reconcile and state.get("pendingCommands"):
+                changed = _discard_legacy_command_evidence(state) or changed
+                changed = _reconcile_commands(state, records) or changed
+            if changed:
+                _save_state(path, state)
+    return state
+
+
 def _observed_id_context(payload: dict[str, Any]) -> Optional[str]:
-    """Read observed IDs only; never create state, register scope, or continue work."""
+    """Reconcile previously observed calls before offering current main check IDs."""
     records = _transcript_records(payload)
     if records is None:
+        return None
+    path = _state_path(payload)
+    state = _load_state(path, max_bytes=MAX_TRANSCRIPT_TAIL_BYTES)
+    state = _refresh_progress(payload, records, path, state)
+    if _is_leaf_assignment(payload):
+        prior_work = max((v for v in (state.get("lastWriteStep"), state.get("lastEvidenceStep"))
+                          if type(v) is int and v >= 0), default=-1)
+        if prior_work >= 0 and any(
+            type(row.get("step_index")) is int and row["step_index"] > prior_work
+            and _native_worker_message(row)[0] == payload["parentConversationId"]
+            for row in records
+        ):
+            return ("Your parent sent a follow-up after recorded work. For an interrupted assignment, "
+                    "inspect your current diff and prior checks. Return the missing handoff in the existing "
+                    "parent conversation, with files, check results and blockers. Recheck any changed work.")
         return None
     request = _latest_user_request(payload, records)
     if request is None:
@@ -2005,7 +2297,7 @@ def _observed_id_context(payload: dict[str, Any]) -> Optional[str]:
             or any(left >= right for left, right in zip(user_steps, user_steps[1:]))):
         return None
     user_step = request[1]
-    state = _load_state(_state_path(payload), max_bytes=MAX_TRANSCRIPT_TAIL_BYTES)
+    _discard_legacy_command_evidence(state)
     contract = state.get("taskContract")
     if (not isinstance(contract, dict) or type(contract.get("userStep")) is not int
             or contract["userStep"] != user_step
@@ -2021,16 +2313,41 @@ def _observed_id_context(payload: dict[str, Any]) -> Optional[str]:
     numbers = [floor] + candidates["behavioral"] + candidates["static"]
     if any(not 0 <= value <= 2**63 - 1 for value in numbers):
         return None
-    return (
-        f"Observed IDs (advisory for MAIN non-inline contract registration/reporting): "
+    current = state.get("taskContract", {})
+    reviews = state.get("acceptanceReviews", {})
+    checkpoint = state.get("workerCheckpoint", {})
+    interrupted = _valid_worker_checkpoint(checkpoint) and any("interruptionStep" in v for v in checkpoint.values())
+    if interrupted and isinstance(reviews, dict) and "delivery" not in reviews:
+        guidance = ("Interrupted assignments: inspect workerCheckpoint in the verification state. Its dispatch, "
+                    "interruption and last-message steps locate original threads and work. Verify the current "
+                    "diff and actual handoffs. After quota or transport recovers, contact only the missing owner "
+                    "in its existing conversation, then run combined checks and obtain independent delivery.")
+    elif (current.get("version") == 2 and "firstWriteStep" not in current
+            and isinstance(reviews, dict) and "delivery" not in reviews):
+        guidance = (
+            "For two or more independent implementation units with disjoint paths, once scope passes, "
+            "assign a distinct implementer to each unassigned unit before waiting. In ordinary sessions "
+            "use invoke_subagent; retain existing assignments. After all handoffs, inspect the combined "
+            "diff, run its checks, obtain independent delivery review and report actual owners, checks and blockers."
+        )
+    else:
+        guidance = (
+            "Apply only when non-inline contract/reporting is already required; read-only work needs no contract. "
+            "This hint does not prove completion or hook delivery."
+        )
+    message = (
+        "Observed IDs for MAIN non-inline contract/reporting: "
         f"current user step={user_step}; evidence floor={floor}; "
         f"eligible check steps (last 8 per kind): behavioral={candidates['behavioral']}, "
-        f"static={candidates['static']}. Use observed current user step as sourceStep for "
-        "this request. Candidates only; AC relevance and current matching delivery review "
-        "remain required. Apply only when non-inline contract/reporting is already required; "
-        "read-only work needs no contract. "
-        "This hint does not prove completion or hook delivery."
+        f"static={candidates['static']}. Use current user step as sourceStep. "
+        f"AC relevance and current matching delivery review remain required. {guidance}"
     )
+    # The transcript parser already validated this same callback's artifact
+    # directory. Keep its spelling so native absolute Paths match that root.
+    location = json.dumps({"artifactDirectoryPath": str(Path(payload["artifactDirectoryPath"]).expanduser())},
+                          ensure_ascii=False, separators=(",", ":"))
+    with_location = message + "\nProtocol artifact location (callback data): " + location
+    return with_location if len(with_location.encode("utf-8")) <= 1024 else message
 
 
 def _completion_repair_context(state: dict[str, Any], user_step: int, response_step: int) -> str:
@@ -2054,6 +2371,10 @@ def _completion_repair_context(state: dict[str, Any], user_step: int, response_s
 
 
 def _completion_status(payload: dict[str, Any], state: dict[str, Any]) -> tuple[str, str]:
+    # A worker reports to its parent. Its own edits still pass through the
+    # verification and citation checks in _handle_stop.
+    if _is_leaf_assignment(payload):
+        return "inactive", ""
     latest = _latest_model_response(payload)
     if latest is None:
         return "unavailable", ""
@@ -2094,7 +2415,8 @@ def _completion_status(payload: dict[str, Any], state: dict[str, Any]) -> tuple[
             raise ValueError("Report every original AC exactly once; do not drop unfinished requirements.")
         seen = set()
         checks = {item["step"]: item for item in state.get("checkEvents", [])}
-        floor = max(user_step, contract["registeredStep"], write_step)
+        floor = max(user_step, contract["registeredStep"], write_step,
+                    state.get("unverifiedCheckStep", -1))
         passed = 0
         for row in rows:
             if not isinstance(row, dict) or not isinstance(row.get("id"), str) or row["id"] not in expected or row["id"] in seen:
@@ -2170,6 +2492,26 @@ def _apply_event(state: dict[str, Any], event: dict[str, Any], step: int) -> boo
     if contract.get("version") == 2 and step <= contract["originStep"]:
         return False
     kind = event.get("kind")
+    if kind == UNVERIFIED:
+        changed = False
+        if event.get("containsMutation") is True:
+            changed = _apply_event(state, {"kind": MUTATION, "requiresBehavioral": True}, step)
+        if step > state.get("unverifiedCheckStep", -1):
+            state["unverifiedCheckStep"] = step
+            changed = True
+        checks = state.get("checkEvents", [])
+        retained = [check for check in checks if not check.get("success") or check["step"] > step]
+        if retained != checks:
+            state["checkEvents"] = retained
+            changed = True
+        for key in ("lastEvidenceStep", "lastBehavioralEvidenceStep", "lastWaiverStep", "verifiedMutationStep"):
+            if type(state.get(key)) is int and state[key] <= step:
+                state.pop(key)
+                changed = True
+        if "lastEvidenceStep" not in state:
+            state.pop("evidence", None)
+            state.pop("waiverReason", None)
+        return changed
     if kind == "mcp-handoff":
         previous = state.get("lastMcpStep", -1)
         if type(previous) is not int or step > previous:
@@ -2235,6 +2577,9 @@ def _apply_event(state: dict[str, Any], event: dict[str, Any], step: int) -> boo
             state["gateRetries"] = 0
         return True
     if kind in {EVIDENCE, WAIVER}:
+        if step <= state.get("unverifiedCheckStep", -1):
+            return False
+        state["commandEvidenceVersion"] = COMMAND_EVIDENCE_VERSION
         changed = False
         if mixed and event.get("behavioral") is True:
             state["verifiedMutationStep"] = step
@@ -2262,6 +2607,87 @@ def _apply_event(state: dict[str, Any], event: dict[str, Any], step: int) -> boo
     return False
 
 
+def _finish_command(state: dict[str, Any], pending: dict[str, Any], result: str) -> None:
+    event, step = pending["event"], pending["step"]
+    mutation = event["kind"] == MUTATION or event.get("containsMutation") is True
+    if result == UNVERIFIED:
+        event = {"kind": UNVERIFIED, "containsMutation": mutation,
+                 "unresolvedToolFailure": pending["callback"] == "error"}
+    elif result == FAILURE:
+        if mutation:
+            event = {"kind": MUTATION, "requiresBehavioral": True, "failedCheck": event.get("containsCheck") is True}
+        elif event["kind"] == WAIVER:
+            return
+        else:
+            event = {**event, "kind": FAILURE}
+    _record_check(state, event, pending["command"], step)
+    _apply_event(state, event, step)
+
+
+def _reconcile_commands(state: dict[str, Any], records: Optional[list[dict[str, Any]]],
+                        *, final: bool = False) -> bool:
+    """Consume receipts for callbacks already seen, always at their original steps."""
+    pending = state.get("pendingCommands", [])
+    waiting = []
+    for item in pending:
+        result = _command_result(records, item["step"], item["callback"], deferred=True)
+        if result == "pending" or records is None:
+            if not final:
+                waiting.append(item)
+                continue
+            result = UNVERIFIED
+        _finish_command(state, item, result)
+    if len(waiting) == len(pending):
+        return False
+    if waiting:
+        state["pendingCommands"] = waiting
+    else:
+        state.pop("pendingCommands")
+    return True
+
+
+def _observe_command(state: dict[str, Any], event: dict[str, Any], args: dict[str, Any],
+                     payload: dict[str, Any], records: Optional[list[dict[str, Any]]], step: int) -> None:
+    fingerprint = hashlib.sha256(
+        (_command(args) + "\0" + str(args.get("Cwd", ""))).encode("utf-8", "replace")
+    ).hexdigest()
+    callback = _callback_status(payload)
+    if "waiverReason" in event:
+        event = {**event, "waiverReason": event["waiverReason"][:300]}
+    item = {"step": step, "command": fingerprint, "event": event, "callback": callback}
+    pending = state.get("pendingCommands", [])
+    previous = next((row for row in pending if row["step"] == step), None)
+    if previous is not None:
+        if previous != item:
+            # One step cannot authenticate two different callbacks.
+            pending.remove(previous)
+            _finish_command(state, previous, UNVERIFIED)
+            _finish_command(state, item, UNVERIFIED)
+        return
+    if any(row["step"] == step and row["command"] != fingerprint for row in state.get("checkEvents", [])):
+        _finish_command(state, item, UNVERIFIED)
+        return
+    result = _command_result(records, step, callback)
+    if records is None and callback != "invalid" and _safe_transcript_path(payload) is not None:
+        # A bounded read can intersect the CLI's in-progress JSONL append.
+        result = "pending"
+    if result != "pending":
+        _finish_command(state, item, result)
+        return
+    # PostToolUse can precede the append to transcript.jsonl. Do not discard
+    # earlier valid checks while an ordinary synchronous check awaits that append.
+    pending = state.setdefault("pendingCommands", [])
+    pending.append(item)
+    pending.sort(key=lambda row: row["step"])
+    if len(pending) > MAX_CHECK_EVENTS:
+        _finish_command(state, pending.pop(0), UNVERIFIED)
+    state["commandEvidenceVersion"] = COMMAND_EVIDENCE_VERSION
+    if event["kind"] == MUTATION or event.get("containsMutation"):
+        _apply_event(state, {"kind": MUTATION, "requiresBehavioral": True}, step)
+    if callback == "error":
+        _record_failure_debt(state, fingerprint, step, state.get("checkEvents", []))
+
+
 def _handle_post(payload: dict[str, Any]) -> None:
     # The primary target is Antigravity CLI, whose official PostToolUse payload
     # includes toolCall. Missing toolCall fails open; using PreToolUse as an
@@ -2277,16 +2703,14 @@ def _handle_post(payload: dict[str, Any]) -> None:
         return
 
     event = _event(name, args, payload)
-    if payload.get("error") and name != "call_mcp_tool":
+    check_command = name == "run_command" and (event.get("kind") in {EVIDENCE, WAIVER} or event.get("containsCheck") is True)
+    if not check_command and payload.get("error") and name != "call_mcp_tool":
         if event.get("kind") == MUTATION or event.get("containsMutation") is True:
             # Earlier segments in an `&&` chain may have changed files before a
             # later check failed, even when the chain's final kind is evidence.
             event = {"kind": MUTATION, "requiresBehavioral": True,
                      "failedCheck": event.get("containsCheck") is True}
-        elif event.get("kind") == EVIDENCE:
-            event["kind"] = FAILURE
         else:
-            # A failed check or waiver is never evidence.
             _emit({})
             return
     is_contract = name == "write_to_file" and args.get("IsArtifact") is True
@@ -2296,11 +2720,18 @@ def _handle_post(payload: dict[str, Any]) -> None:
             if not acquired:
                 raise OSError(f"could not lock verification state: {path}")
             state = _load_state(path)
-            changed = _register_contract(state, name, args, payload, step) if is_contract else False
+            changed = _discard_legacy_command_evidence(state)
+            records = _transcript_records(payload) if check_command or state.get("pendingCommands") else None
+            changed = _reconcile_commands(state, records) or changed
+            if is_contract:
+                changed = _register_contract(state, name, args, payload, step) or changed
             if is_contract:
                 changed = _register_acceptance_review(state, args, payload, step) or changed
-            changed = _record_check(state, event, args, step) or changed
-            changed = _apply_event(state, event, step) or changed
+            if check_command:
+                _observe_command(state, event, args, payload, records, step)
+                changed = True
+            else:
+                changed = _apply_event(state, event, step) or changed
             if changed:
                 _save_state(path, state)
 
@@ -2362,6 +2793,11 @@ def _mcp_handoff_status(
 
 def _handle_stop(payload: dict[str, Any]) -> None:
     if not _normal_idle_stop(payload):
+        records = _transcript_records(payload)
+        if records:
+            path = _state_path(payload)
+            _refresh_progress(payload, records, path, _load_state(path, max_bytes=MAX_TRANSCRIPT_TAIL_BYTES),
+                              reconcile=False)
         _emit({"decision": "allow"})
         return
 
@@ -2371,7 +2807,9 @@ def _handle_stop(payload: dict[str, Any]) -> None:
         if not acquired:
             raise OSError(f"could not lock verification state: {path}")
         state = _load_state(path)
-        state_changed = False
+        state_changed = _discard_legacy_command_evidence(state)
+        if state.get("pendingCommands"):
+            state_changed = _reconcile_commands(state, _transcript_records(payload), final=True) or state_changed
         continue_reasons: list[str] = []
         warnings: list[str] = []
         handoff_status, handoff_user_step = _mcp_handoff_status(payload, state)

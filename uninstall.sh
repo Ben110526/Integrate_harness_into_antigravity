@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # Removes what install.sh installed: the harness plugin, the managed GEMINI.md
-# block (restoring the pre-install backup when present), and the pinned GitHub
+# block (preserving current user rules and the recovery backup), and the pinned GitHub
 # MCP binary. The installer never modifies settings.json, so terminal
 # permissions and other user settings are left untouched.
 
@@ -51,25 +51,20 @@ if [[ -n "${agy_executable}" ]]; then
   done
 fi
 
-if [[ -f "${policy_backup}" ]]; then
-  mv -- "${policy_backup}" "${policy_target}"
-  printf '[ok] restored %s from the pre-install backup.\n' "${policy_target}"
-elif [[ -f "${policy_target}" ]] && grep -Fq "${policy_start_marker}" "${policy_target}"; then
+if [[ -f "${policy_target}" ]] && grep -Fq "${policy_start_marker}" "${policy_target}"; then
   policy_temp_path="$(mktemp "${policy_dir}/.auto-harness-policy.XXXXXX")"
-  awk -v start="${policy_start_marker}" -v end="${policy_end_marker}" '
-    { sub(/\r$/, "") }
-    $0 == start { in_managed_block = 1; next }
-    $0 == end { in_managed_block = 0; next }
+  if ! awk -v start="${policy_start_marker}" -v end="${policy_end_marker}" '
+    { marker = $0; sub(/\r$/, "", marker) }
+    marker == start { if (in_managed_block) exit 2; in_managed_block = 1; next }
+    marker == end { if (!in_managed_block) exit 2; in_managed_block = 0; next }
     in_managed_block { next }
-    /^[[:space:]]*$/ { pending_blank_lines += 1; next }
-    {
-      while (pending_blank_lines > 0) {
-        print ""
-        pending_blank_lines -= 1
-      }
-      print
-    }
-  ' "${policy_target}" > "${policy_temp_path}"
+    { print }
+    END { if (in_managed_block) exit 2 }
+  ' "${policy_target}" > "${policy_temp_path}"; then
+    rm -f -- "${policy_temp_path}"
+    printf 'Error: malformed harness policy markers; current policy and backup were preserved.\n' >&2
+    exit 1
+  fi
   if [[ -s "${policy_temp_path}" ]]; then
     mv -- "${policy_temp_path}" "${policy_target}"
     printf '[ok] removed the managed block from %s\n' "${policy_target}"
@@ -79,6 +74,9 @@ elif [[ -f "${policy_target}" ]] && grep -Fq "${policy_start_marker}" "${policy_
   fi
 else
   printf '[skip] no managed policy block found in %s.\n' "${policy_target}"
+fi
+if [[ -f "${policy_backup}" ]]; then
+  printf '[ok] retained recovery backup %s; current user rules were not replaced.\n' "${policy_backup}"
 fi
 
 printf 'Done. The installer never modifies settings.json, so no permission cleanup is needed.\n'

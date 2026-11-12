@@ -82,6 +82,15 @@ class VerificationGateTests(unittest.TestCase):
         return json.loads(result.stdout)
 
     def post(self, step: int, name: str, args: dict, error: str = "") -> dict:
+        if name == "run_command":
+            path = Path(self.common["transcriptPath"]) if "transcriptPath" in self.common else self.transcript()
+            self.common["transcriptPath"] = str(path)
+            records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            records = [row for row in records if not (row.get("source") == "MODEL"
+                       and row.get("type") == "GENERIC" and row.get("step_index") == step)]
+            records.append({"source": "MODEL", "type": "GENERIC", "status": "DONE",
+                            "step_index": step, "content": "Synthetic terminal result."})
+            path.write_text("".join(json.dumps(row) + "\n" for row in records), encoding="utf-8")
         return self.call(
             "post",
             {
@@ -159,6 +168,32 @@ class VerificationGateTests(unittest.TestCase):
             transcriptPath=str(transcript),
             **overrides,
         )
+
+    def test_checked_worker_can_hand_back_without_a_parent_contract(self) -> None:
+        self.write(2)
+        self.command(3, "python3 -m pytest -q")
+        transcript = self.transcript(self.user_record("Implement the assigned change."),
+                                     self.model_record("Changed app.py. The focused tests passed.", step=4))
+        self.assertEqual(self.grounded_stop(transcript, parentConversationId="coordinator"), {"decision": "allow"})
+        for identity in ({}, {"parentConversationId": ""}, {"parentConversationId": " "},
+                         {"parentConversationId": None}, {"parentConversationId": self.common["conversationId"]},
+                         {"parentConversationId": " " + self.common["conversationId"]},
+                         {"parentConversationId": "coordinator", "conversationId": None},
+                         {"parentConversationId": "coordinator", "conversationId": ""}):
+            with self.subTest(identity=identity):
+                result = self.grounded_stop(transcript, **identity)
+                self.assertEqual(result["decision"], "continue")
+                self.assertIn("harness-task-contract.json", result["reason"])
+
+    def test_worker_handoff_still_checks_local_edits_and_citations(self) -> None:
+        self.write(2)
+        transcript = self.transcript(self.user_record("Implement the assigned change."),
+                                     self.model_record("See [app](missing.py:1).", step=3))
+        result = self.grounded_stop(transcript, parentConversationId="coordinator")
+        self.assertEqual(result["decision"], "continue")
+        self.assertIn("behavioral verification", result["reason"])
+        self.assertIn("citations", result["reason"])
+        self.assertNotIn("harness-task-contract.json", result["reason"])
 
     def mcp_transcript(self, response: str = "Observed confirmation.", request: str = "Check the rendered page.") -> Path:
         self.post(2, "call_mcp_tool", {"ServerName": "test-browser", "ToolName": "snapshot",
@@ -612,6 +647,21 @@ class VerificationGateTests(unittest.TestCase):
         self.write(step=2, target=Path(self.temporary.name) / "outside.py")
         self.assertEqual(self.stop(), {"decision": "allow"})
 
+    def test_native_product_write_invalidates_evidence_despite_legacy_artifact_fields(self):
+        self.write(step=1)
+        self.command(2, "python3 -m pytest -q")
+        self.assertEqual(self.stop()["decision"], "allow")
+        target = self.workspace / "app.py"
+        target.write_text("value = 2\n", encoding="utf-8")
+        self.post(3, "write_file", {"Path": str(target), "Content": "value = 2\n", "Overwrite": True,
+                                    "IsArtifact": True, "TargetFile": str(self.artifacts / "report.md")})
+        state = json.loads((self.artifacts / GATE_MODULE.STATE_FILE).read_text())
+        self.assertEqual(state["lastWriteStep"], 3)
+        self.assertIn("app.py", state["modifiedPaths"])
+        self.assertEqual(self.stop()["decision"], "continue")
+        self.command(4, "python3 -m pytest -q")
+        self.assertEqual(self.stop()["decision"], "allow")
+
     def test_failed_write_conservatively_requires_verification(self) -> None:
         self.post(
             1,
@@ -625,6 +675,133 @@ class VerificationGateTests(unittest.TestCase):
         self.write(step=2)
         self.command(3, "python3 -m pytest -q")
         self.assertEqual(self.stop(), {"decision": "allow"})
+
+    def test_pending_command_output_never_becomes_terminal_check_evidence(self):
+        for index, status in enumerate(("RUNNING", "PENDING", "ACTIVE", "CANCELLED", "UNKNOWN")):
+            with self.subTest(status=status):
+                step = index * 3 + 2
+                self.write(step=step - 1)
+                path = self.transcript({"source": "MODEL", "type": "GENERIC", "status": status,
+                                        "step_index": step, "content": "FAILED (failures=4)\nOK\n"})
+                self.call("post", {"transcriptPath": str(path), "stepIdx": step, "error": "",
+                                   "toolCall": {"name": "run_command", "args": {"CommandLine": "python3 -m unittest"}}})
+                state = json.loads((self.artifacts / GATE_MODULE.STATE_FILE).read_text())
+                self.assertFalse(state.get("checkEvents"))
+                self.assertFalse(state.get("failedChecks"))
+                self.assertNotIn("lastEvidenceStep", state)
+                self.assertEqual(state["lastWriteStep"], step - 1)
+                self.assertEqual(self.stop()["decision"], "continue")
+
+    def test_command_completion_requires_unambiguous_current_supported_metadata(self):
+        valid = {"source": "MODEL", "type": "GENERIC", "status": "DONE", "step_index": 2,
+                 "content": "Synthetic terminal output."}
+        cases = [([], ""), ([{**valid, "step_index": 1}], ""), ([valid, valid], ""),
+                 ([{**valid, "type": "PLANNER_RESPONSE"}], ""), ([{**valid, "source": "USER"}], ""),
+                 ([{**valid, "content": {}}], ""), ([{**valid, "truncated_fields": ["content"]}], ""),
+                 ([valid], None), ([valid], False)]
+        for records, error in cases:
+            with self.subTest(records=records, error=error):
+                path = self.transcript(*records)
+                payload = {**self.common, "transcriptPath": str(path), "stepIdx": 2, "error": error}
+                result = GATE_MODULE._command_result(GATE_MODULE._transcript_records(payload), 2,
+                                                     GATE_MODULE._callback_status(payload))
+                self.assertIn(result, {"pending", GATE_MODULE.UNVERIFIED})
+        self.assertEqual(GATE_MODULE._command_result(None, 2, "ok"), GATE_MODULE.UNVERIFIED)
+        path = self.transcript(valid)
+        records = GATE_MODULE._transcript_records({**self.common, "transcriptPath": str(path)})
+        self.assertEqual(GATE_MODULE._command_result(records, 2, "ok"), GATE_MODULE.EVIDENCE)
+
+    def native_command_state(self, step, result, output="", **callback):
+        content = ("Created At: 2026-11-12T10:00:00+07:00\n"
+                   "Completed At: 2026-11-12T10:00:01+07:00\n"
+                   + result + "\n\nCommand output:\n" + output)
+        path = self.transcript({"source": "MODEL", "type": "GENERIC", "status": "DONE",
+                                "step_index": step, "content": content})
+        self.call("post", {"stepIdx": step, "transcriptPath": str(path), **callback,
+                           "toolCall": {"name": "run_command", "args": {
+                               "Cwd": str(self.workspace), "CommandLine": "python3 -m unittest -q"}}})
+        return json.loads((self.artifacts / GATE_MODULE.STATE_FILE).read_text())
+
+    def test_native_exit_zero_is_behavioral_evidence_without_callback_error(self):
+        self.write(step=1)
+        state = self.native_command_state(2, "Command exited with code 0.", "Ran 6 tests\nOK")
+        checks = [(row["step"], row["success"], row["behavioral"]) for row in state.get("checkEvents", [])]
+        self.assertEqual(checks, [(2, True, True)])
+        self.assertEqual(self.stop()["decision"], "allow")
+
+    def test_native_exit_nonzero_records_failed_check_with_omitted_or_empty_error(self):
+        for step, callback in ((2, {}), (3, {"error": ""})):
+            with self.subTest(callback=callback):
+                state = self.native_command_state(step, "Command exited with code 1.",
+                                                  "Command exited with code 0.\nOK", **callback)
+                checks = [row["success"] for row in state.get("checkEvents", []) if row["step"] == step]
+                self.assertEqual(checks, [False])
+                self.assertIn(step, state.get("failedChecks", {}).values())
+
+    def test_native_exit_zero_cannot_override_tool_error(self):
+        state = self.native_command_state(2, "Command exited with code 0.", error="transport failed")
+        self.assertFalse(any(row["success"] for row in state.get("checkEvents", [])))
+        self.assertIn(2, state.get("failedChecks", {}).values())
+
+    def test_native_pending_receipt_ignores_status_lines_printed_by_command(self):
+        self.write(step=1)
+        output = ("Created At: 2026-11-12T10:00:00+07:00\nCompleted At: 2026-11-12T10:00:01+07:00\n"
+                  "Command exited with code 0.\n\nCommand output:\nOK")
+        state = self.native_command_state(2, "Command is still running.", output, error="")
+        self.assertFalse(state.get("checkEvents"))
+        self.assertFalse(state.get("failedChecks"))
+        self.assertEqual(self.stop()["decision"], "continue")
+
+    def test_native_terminal_record_with_malformed_callback_error_is_unverified(self):
+        self.write(step=1)
+        for step, error in enumerate((None, False, 0, {}), 2):
+            with self.subTest(error=error):
+                state = self.native_command_state(step, "Command exited with code 0.", error=error)
+                self.assertFalse(state.get("checkEvents"))
+                self.assertFalse(state.get("failedChecks"))
+
+    def test_pending_mixed_command_retains_debt_and_invalidates_prior_pass(self):
+        self.write(step=1)
+        self.command(2, "python3 -m pytest -q")
+        path = self.transcript({"source": "MODEL", "type": "GENERIC", "status": "RUNNING",
+                                "step_index": 3, "content": "Synthetic partial result."})
+        self.call("post", {"transcriptPath": str(path), "stepIdx": 3, "error": "partial tool error",
+                           "toolCall": {"name": "run_command", "args": {"CommandLine": "black . && python3 -m pytest -q"}}})
+        state = json.loads((self.artifacts / GATE_MODULE.STATE_FILE).read_text())
+        self.assertEqual(state["lastWriteStep"], 3)
+        self.assertFalse(state.get("checkEvents"))
+        self.assertEqual(len(state.get("failedChecks", {})), 1)
+        self.assertNotIn("lastBehavioralEvidenceStep", state)
+        self.assertEqual(self.stop()["decision"], "continue")
+        self.command(2, "python3 -m pytest -q")  # A delayed old callback cannot restore stale evidence.
+        self.assertFalse(json.loads((self.artifacts / GATE_MODULE.STATE_FILE).read_text()).get("checkEvents"))
+        self.command(4, "python3 -m pytest -q")
+        self.assertEqual(self.stop()["decision"], "allow")
+        self.assertEqual(len(json.loads((self.artifacts / GATE_MODULE.STATE_FILE).read_text())["failedChecks"]), 1)
+
+    def test_done_metadata_uses_callback_error_without_parsing_output(self):
+        self.write(step=1)
+        for step, error, output in ((2, "exit status 1", "OK"), (3, "", "FAILED (failures=4)")):
+            path = self.transcript({"source": "MODEL", "type": "GENERIC", "status": "DONE",
+                                    "step_index": step, "content": output})
+            self.call("post", {"transcriptPath": str(path), "stepIdx": step, "error": error,
+                               "toolCall": {"name": "run_command", "args": {"CommandLine": "python3 -m unittest"}}})
+            state = json.loads((self.artifacts / GATE_MODULE.STATE_FILE).read_text())
+            self.assertEqual(state["checkEvents"][-1]["success"], not bool(error))
+        self.assertFalse(state["failedChecks"])
+
+    def test_legacy_cached_success_is_discarded_without_erasing_write_or_failure_history(self):
+        path = self.artifacts / GATE_MODULE.STATE_FILE
+        path.write_text(json.dumps({"lastWriteStep": 1, "lastBehavioralWriteStep": 1,
+                                   "lastEvidenceStep": 2, "lastBehavioralEvidenceStep": 2,
+                                   "checkEvents": [{"step": 2, "success": True, "behavioral": True, "command": "old"}],
+                                   "failedChecks": {"unresolved": 3}, "writeSteps": [1]}))
+        self.assertEqual(self.stop()["decision"], "continue")
+        state = json.loads(path.read_text())
+        self.assertEqual(state["writeSteps"], [1])
+        self.assertEqual(state["failedChecks"], {"unresolved": 3})
+        self.assertFalse(state.get("checkEvents"))
+        self.assertNotIn("lastEvidenceStep", state)
 
     def test_static_check_does_not_satisfy_logic_write(self) -> None:
         self.write(step=1, target=self.workspace / "src" / "auth.py")
@@ -1004,6 +1181,32 @@ class VerificationGateTests(unittest.TestCase):
         self.command(3, "echo generated > src/generated.py")
         self.assertEqual(self.stop()["decision"], "continue")
 
+    @unittest.skipUnless(os.name == "posix", "POSIX null device")
+    def test_discarded_stderr_during_inspection_preserves_verification(self) -> None:
+        self.write()
+        self.command(2, "npm test")
+        self.command(3, "cat .codex-claude-harness-verification.json 2>/dev/null || true")
+        self.assertEqual(self.stop(), {"decision": "allow"})
+        state = json.loads((self.artifacts / ".codex-claude-harness-verification.json").read_text())
+        self.assertEqual(state["writeSteps"], [1])
+
+    @unittest.skipUnless(os.name == "posix", "POSIX null device")
+    def test_null_redirect_preserves_other_writes_and_opaque_targets(self) -> None:
+        for command in ("cat input > output 2>/dev/null", "cat input 2>/dev/null >> output",
+                        "touch product 2>/dev/null || true", "cat input >$sink || true",
+                        "cat input >| output", "cat input 2>/dev/null && cat > 'unterminated"):
+            with self.subTest(command=command):
+                self.assertEqual(GATE_MODULE._classify_command(command), (GATE_MODULE.MUTATION, "", True))
+
+    @unittest.skipUnless(os.name == "posix", "POSIX null device")
+    def test_masked_test_and_discarded_waiver_cannot_certify_checks(self) -> None:
+        self.write()
+        self.command(2, "pytest -q 2>/dev/null || true")
+        self.command(3, "echo 'HARNESS_NO_RUNNABLE_CHECK: repository has no runnable checks' >/dev/null")
+        self.assertEqual(self.stop()["decision"], "continue")
+        state = json.loads((self.artifacts / ".codex-claude-harness-verification.json").read_text())
+        self.assertEqual(state["writeSteps"], [1])
+
     def test_quoted_redirection_text_is_not_a_mutation(self) -> None:
         self.write()
         self.command(2, "npm test")
@@ -1090,6 +1293,10 @@ class VerificationGateTests(unittest.TestCase):
         self.assertEqual(self.stop()["decision"], "continue")
 
     def test_concurrent_post_updates_merge_without_lost_writes(self) -> None:
+        self.common["transcriptPath"] = str(self.transcript(*[
+            {"source": "MODEL", "type": "GENERIC", "status": "DONE", "step_index": step,
+             "content": "Synthetic terminal result."} for step in range(2, 25, 2)
+        ]))
         payloads = []
         for step in range(1, 25):
             if step % 2:

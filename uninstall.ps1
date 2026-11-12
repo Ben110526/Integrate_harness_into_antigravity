@@ -2,7 +2,7 @@
 <#
 .SYNOPSIS
     Removes what install.ps1 installed: the harness plugin, the managed
-    GEMINI.md block (restoring the pre-install backup when present), and the
+    GEMINI.md block (preserving current user rules and the recovery backup), and the
     pinned GitHub MCP binary. The installer never modifies settings.json, so
     terminal permissions and other user settings are left untouched.
 #>
@@ -51,22 +51,28 @@ if ($agyCommand) {
     }
 }
 
-if (Test-Path $policyBackup -PathType Leaf) {
-    if (Test-Path $policyTarget -PathType Leaf) {
-        [System.IO.File]::Replace($policyBackup, $policyTarget, $null)
-    } else {
-        [System.IO.File]::Move($policyBackup, $policyTarget)
-    }
-    Write-Host "[ok] restored $policyTarget from the pre-install backup."
+$existingPolicy = ""
+if (Test-Path $policyTarget -PathType Leaf) {
+    $existingPolicy = [System.IO.File]::ReadAllText($policyTarget, (New-Object System.Text.UTF8Encoding($false, $true)))
 }
-elseif ((Test-Path $policyTarget -PathType Leaf) -and ((Get-Content $policyTarget -Raw).Contains($policyStartMarker))) {
-    $existingPolicy = Get-Content $policyTarget -Raw
-    $managedPattern = [regex]::Escape($policyStartMarker) + "[\s\S]*?" + [regex]::Escape($policyEndMarker) + "\r?\n?"
-    $strippedPolicy = ([regex]::Replace($existingPolicy, $managedPattern, "")).TrimEnd()
+if ([regex]::IsMatch($existingPolicy, "(?m)^" + [regex]::Escape($policyStartMarker) + "\r?$")) {
+    $insideBlock = $false
+    foreach ($line in ($existingPolicy -split "\r?\n")) {
+        if ($line -eq $policyStartMarker) {
+            if ($insideBlock) { throw "Malformed harness policy markers; current policy and backup were preserved." }
+            $insideBlock = $true
+        } elseif ($line -eq $policyEndMarker) {
+            if (-not $insideBlock) { throw "Malformed harness policy markers; current policy and backup were preserved." }
+            $insideBlock = $false
+        }
+    }
+    if ($insideBlock) { throw "Malformed harness policy markers; current policy and backup were preserved." }
+    $managedPattern = "(?m)^" + [regex]::Escape($policyStartMarker) + "\r?\n[\s\S]*?^" + [regex]::Escape($policyEndMarker) + "(?:\r?\n|$)"
+    $strippedPolicy = [regex]::Replace($existingPolicy, $managedPattern, "")
     if ($strippedPolicy) {
         $policyTempPath = Join-Path $policyDirectory ("GEMINI.md.tmp-" + [Guid]::NewGuid().ToString("N"))
         try {
-            [System.IO.File]::WriteAllText($policyTempPath, $strippedPolicy + [Environment]::NewLine, (New-Object System.Text.UTF8Encoding($false)))
+            [System.IO.File]::WriteAllText($policyTempPath, $strippedPolicy, (New-Object System.Text.UTF8Encoding($false)))
             [System.IO.File]::Replace($policyTempPath, $policyTarget, $null)
         }
         finally {
@@ -82,6 +88,9 @@ elseif ((Test-Path $policyTarget -PathType Leaf) -and ((Get-Content $policyTarge
 }
 else {
     Write-Host "[skip] no managed policy block found in $policyTarget."
+}
+if (Test-Path $policyBackup -PathType Leaf) {
+    Write-Host "[ok] retained recovery backup $policyBackup; current user rules were not replaced."
 }
 
 Write-Host "Done. The installer never modifies settings.json, so no permission cleanup is needed."

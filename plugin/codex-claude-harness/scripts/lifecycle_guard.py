@@ -147,6 +147,10 @@ def _tool_call(payload: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
     args = call.get("args")
     if not isinstance(name, str) or not isinstance(args, dict):
         raise ScanIncomplete("invalid tool call")
+    if name == "write_file":
+        # Native arguments are authoritative; legacy aliases cannot replace
+        # the content scanned by DLP or the file selected for formatting.
+        return "write_to_file", {"TargetFile": args.get("Path"), "CodeContent": args.get("Content")}
     return name, args
 
 

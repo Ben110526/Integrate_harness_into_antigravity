@@ -14,6 +14,9 @@ $policyTarget = Join-Path $policyDirectory "GEMINI.md"
 $agyCallLog = Join-Path $testRoot "agy-calls.log"
 $currentPowerShell = (Get-Process -Id $PID).Path
 $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+# Keep the test source ASCII-safe for Windows PowerShell 5.1 itself.
+$unicodeRule = "- " + (-join [char[]]@(0x47, 0x69, 0x1eef, 0x20, 0x74, 0x69, 0x1ebf, 0x6e, 0x67, 0x20, 0x56, 0x69, 0x1ec7, 0x74, 0x2e))
+$inlineMarkerRule = "- Marker example: <!-- auto-harness:start --> in prose."
 
 function Write-TestText([string] $Path, [string] $Contents) {
     [System.IO.File]::WriteAllText($Path, $Contents, $script:utf8WithoutBom)
@@ -88,7 +91,7 @@ $originalAgyCallLog = $env:HARNESS_AGY_CALL_LOG
 
 try {
     New-Item -ItemType Directory -Force -Path $fakeBin, $runtimeBin, $policyDirectory, $fakeTmp | Out-Null
-    Write-TestText $policyTarget "# Existing user rule`n`n- Keep this line.`n"
+    Write-TestText $policyTarget "# Existing user rule`n`n- Keep this line.`n$unicodeRule`n$inlineMarkerRule`n"
 
     if ($onWindows) {
         $fakeAgy = Join-Path $fakeBin "agy.cmd"
@@ -270,17 +273,37 @@ exit 0
         throw "missing Node.js did not preserve the reported legacy core-only fallback"
     }
 
-    $policy = Get-Content $policyTarget -Raw
+    $policy = [System.IO.File]::ReadAllText($policyTarget)
     if (-not $policy.Contains("- Keep this line.")) { throw "installer removed existing user policy" }
-    if ([regex]::Matches($policy, [regex]::Escape("<!-- auto-harness:start -->")).Count -ne 1) { throw "installer duplicated the managed policy start marker" }
-    if ([regex]::Matches($policy, [regex]::Escape("<!-- auto-harness:end -->")).Count -ne 1) { throw "installer duplicated the managed policy end marker" }
+    if (-not $policy.Contains($unicodeRule)) { throw "installer corrupted UTF-8 user policy" }
+    if (-not $policy.Contains($inlineMarkerRule)) { throw "installer removed an inline marker example" }
+    if ([regex]::Matches($policy, "(?m)^<!-- auto-harness:start -->\r?$").Count -ne 1) { throw "installer duplicated the managed policy start marker" }
+    if ([regex]::Matches($policy, "(?m)^<!-- auto-harness:end -->\r?$").Count -ne 1) { throw "installer duplicated the managed policy end marker" }
     if (-not $policy.Contains("# Automatic engineering harness")) { throw "installer did not add the managed policy" }
 
     $policyBackup = $policyTarget + ".bak"
     if (-not (Test-Path $policyBackup -PathType Leaf)) { throw "installer did not keep a backup of the existing user policy" }
-    if (-not ((Get-Content $policyBackup -Raw).Contains("- Keep this line."))) { throw "policy backup lost existing user content" }
+    $backupPolicy = [System.IO.File]::ReadAllText($policyBackup)
+    if (-not $backupPolicy.Contains("- Keep this line.") -or -not $backupPolicy.Contains($unicodeRule)) { throw "policy backup lost existing user content" }
 
-    Write-Host "[ok] PowerShell installer configuration and fallback checks passed"
+    # A stale pre-install backup must never replace edits made after installation.
+    $laterUnicodeRule = $unicodeRule + " Added after installing the harness."
+    Write-TestText $policyTarget ($policy + "`n- Added after installing the harness.`n$laterUnicodeRule`n")
+    $env:PATH = $fullPath
+    $env:HARNESS_EXPECT_MCP_PRESENT = "0"
+    & $currentPowerShell -NoProfile -File (Join-Path $repoRoot "uninstall.ps1") *> (Join-Path $testRoot "uninstall.log")
+    if ($LASTEXITCODE -ne 0) { throw "uninstaller failed" }
+    $remainingPolicy = [System.IO.File]::ReadAllText($policyTarget)
+    if (-not $remainingPolicy.Contains("- Keep this line.") -or -not $remainingPolicy.Contains("- Added after installing the harness.")) {
+        throw "uninstaller replaced current user rules with the old backup"
+    }
+    if (-not $remainingPolicy.Contains($unicodeRule) -or -not $remainingPolicy.Contains($laterUnicodeRule)) { throw "uninstaller corrupted UTF-8 user policy" }
+    if (-not $remainingPolicy.Contains($inlineMarkerRule)) { throw "uninstaller removed an inline marker example" }
+    if ([regex]::IsMatch($remainingPolicy, "(?m)^<!-- auto-harness:start -->\r?$")) { throw "uninstaller retained managed policy" }
+    if (-not (Test-Path $policyBackup -PathType Leaf)) { throw "uninstaller removed the recovery backup" }
+    if ((Get-Content $policyBackup -Raw).Contains("- Added after installing the harness.")) { throw "uninstaller changed the recovery backup" }
+
+    Write-Host "[ok] PowerShell installer, uninstaller, configuration and fallback checks passed"
 }
 finally {
     $env:HOME = $originalHome
